@@ -67,3 +67,12 @@ test("answers require a finite timestamp and valid player id", () => {
   assert.throws(() => submitAnswer(active, { playerId: 42, text: "answer", submittedAt: 3 }), TypeError);
   assert.throws(() => submitAnswer(active, { playerId: "p1", text: "answer", submittedAt: NaN }), TypeError);
 });
+
+test("room transitions reject invalid timestamps",()=>{
+ assert.throws(()=>createRoom({id:"r",hostId:"p",createdAt:Infinity}),TypeError);
+ assert.throws(()=>addPlayer(createRoom({id:"r",hostId:"p"}),{id:"p",name:"Ana"},NaN),TypeError);
+ assert.throws(()=>removePlayer(lobby(),"p1",Infinity),TypeError);
+ assert.throws(()=>startRoom(lobby(),NaN),TypeError);
+ assert.throws(()=>beginRound(startRoom(lobby()),{id:"round",challengeId:"c"},Infinity),TypeError);
+ assert.throws(()=>revealRound(beginRound(startRoom(lobby()),{id:"round",challengeId:"c"}),NaN),TypeError);
+});

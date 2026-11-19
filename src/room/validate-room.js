@@ -5,9 +5,9 @@ export function validateRoomSnapshot(room) {
   if (typeof room.id !== "string" || !room.id.trim()) errors.push("Room id is required");
   if (!["lobby", "playing", "finished"].includes(room.state)) errors.push("Unknown room state");
   if (typeof room.hostId !== "string" && room.hostId !== null) errors.push("hostId must be a string or null");
+  const ids = new Set();
   if (!Array.isArray(room.players)) errors.push("players must be an array");
   else {
-    const ids = new Set();
     for (const [i, player] of room.players.entries()) {
       if (!player || typeof player.id !== "string" || !player.id.trim()) errors.push(`players[${i}].id is invalid`);
       else if (ids.has(player.id)) errors.push(`Duplicate player id: ${player.id}`);
@@ -16,7 +16,8 @@ export function validateRoomSnapshot(room) {
       if (!player || !Number.isFinite(player.joinedAt)) errors.push(`players[${i}].joinedAt is invalid`);
     }
     if (room.hostId !== null && !ids.has(room.hostId)) errors.push("hostId must identify a room member");
-    if (Number.isInteger(room.maxPlayers) && room.players.length > room.maxPlayers) errors.push("Room exceeds maxPlayers");
+    if (!Number.isInteger(room.maxPlayers) || room.maxPlayers < 2 || room.maxPlayers > 32) errors.push("maxPlayers is invalid");
+    if (room.players.length > room.maxPlayers) errors.push("Room exceeds maxPlayers");
   }
   if (!Number.isFinite(room.createdAt)) errors.push("createdAt must be finite");
   if (!Number.isFinite(room.updatedAt)) errors.push("updatedAt must be finite");

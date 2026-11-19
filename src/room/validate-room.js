@@ -15,7 +15,7 @@ export function validateRoomSnapshot(room) {
       if (!player || typeof player.name !== "string" || !player.name.trim()) errors.push(`players[${i}].name is invalid`);
       if (!player || !Number.isFinite(player.joinedAt)) errors.push(`players[${i}].joinedAt is invalid`);
     }
-    if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && !ids.has(room.hostId)))) errors.push("hostId must identify a room member");
+    if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && room.state !== "lobby" && !ids.has(room.hostId)))) errors.push("hostId must identify a room member");
     if (!Number.isInteger(room.maxPlayers) || room.maxPlayers < 2 || room.maxPlayers > 32) errors.push("maxPlayers is invalid");
     if (room.players.length > room.maxPlayers) errors.push("Room exceeds maxPlayers");
   }

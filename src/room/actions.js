@@ -4,9 +4,9 @@ import { assertExpectedRevision, nextRevision, actionKey } from "./revision.js";
  * Caller must validate identity, permissions, deadlines and idempotency server-side.
  */
 export function applyRoomAction(snapshot, envelope, context = {}) {
-  if (!snapshot || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) throw new TypeTypeError("Valid room snapshot required");
+  if (!snapshot || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) throw new TypeError("Valid room snapshot required");
   if (!envelope || typeof envelope.actionId !== "string" || !envelope.actionId.trim()) throw new TypeError("actionId required");
-  if (!envelope.type || typeof envelope.type !== "string") throw new TypeTypeError("Action type required");
+  if (!envelope.type || typeof envelope.type !== "string") throw new TypeError("Action type required");
   assertExpectedRevision(snapshot.revision, envelope.expectedRevision);
   if (context.playerId && envelope.playerId && context.playerId !== envelope.playerId) throw new Error("Authenticated identity mismatch");
   const key = actionKey(envelope.playerId || context.playerId, envelope.actionId);

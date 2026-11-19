@@ -45,3 +45,7 @@ test("connection state rejects malformed retry counters and timestamps", () => {
   assert.throws(() => markDisconnected({ ...valid, updatedAt: NaN }, 13), /Invalid connection state/);
   assert.throws(() => markDisconnected({ ...valid, playerId: " " }, 13), /Invalid connection state/);
 });
+test("reconnect attempt counter cannot overflow safe integer", () => {
+  const edge = { ...createConnectionState({ playerId: "p1" }), retryAttempt: Number.MAX_SAFE_INTEGER };
+  assert.throws(() => beginReconnect(edge, 2), /Retry attempt limit/);
+});

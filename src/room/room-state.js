@@ -11,7 +11,7 @@ const assertRoom = (room) => {
     if (ids.has(player.id)) throw new Error("Duplicate player in room");
     ids.add(player.id);
   }
-  if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && !ids.has(room.hostId)))) throw new TypeError("Room host must be a member");
+  if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && room.state !== "lobby" && !ids.has(room.hostId)))) throw new TypeError("Room host must be a member");
   // A newly created lobby may hold its intended host ID before the host joins.
 
   if (!Number.isSafeInteger(room.roundsPlayed) || room.roundsPlayed < 0 || !Number.isFinite(room.createdAt) || !Number.isFinite(room.updatedAt)) throw new TypeError("Invalid room counters or timestamps");

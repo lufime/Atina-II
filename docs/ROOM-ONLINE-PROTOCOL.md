@@ -1,4 +1,4 @@
-# Online Room — action and synchronization contract (draft)
+# Room Online — action and synchronization contract (draft)
 
 This is a transport-neutral contract for the next backend integration step. No live backend is connected.
 
@@ -14,26 +14,27 @@ Each action should include:
 - `expectedRevision`: last canonical room revision observed by the client
 - `type`: allowlisted action name
 - `payload`: action-specific data
-- `auth context`: session token supplied separately, never embedded in payload
+- auth context: session token supplied separately, never embedded in payload
 
-The backend validates identity, membership, state, deadline, payload shape and request idempotency before applying an action.
+The backend validates identity, membership, state, deadline, payload shape and request idempotency before applying an action. Duplicate action IDs are checked before revision conflict handling so retries remain idempotent after the room advances.
 
 ## Canonical snapshot
 
-Every accepted state mutation returns:
-- `roomId`
-- monotonically increasing `revision`
-- `state`
-- participant list and host id
-- current round metadata and publicly visible answers only
-- team/player score values, once scoring rules are specified
-- server timestamp
+Every accepted state mutation returns `roomId`, monotonically increasing `revision`, state, participants/host, current-round metadata, public answers and server timestamp. Clients discard snapshots older than their current revision. Conflicts trigger canonical refresh; clients do not overwrite server state optimistically.
 
-Clients discard snapshots older than the revision already applied. Revision conflicts require refreshing canonical state; clients do not overwrite server state optimistically.
+## Public synchronization and reconnect
+
+`src/room/reconnect.js` provides transport-neutral revision synchronization:
+- matching revision returns `unchanged`
+- a stale revision receives a filtered `snapshot`
+- snapshot fields are allowlisted, including player fields and round metadata/answers
+- private challenge fields, auth/session values and arbitrary internal properties are not copied
+
+This projection is not authorization or persistence. The backend must apply equivalent filtering and recheck membership before sending any room data.
 
 ## Private challenge data
 
-The canonical public room snapshot must never include the solution before the explicit reveal transition. Challenge payloads should be split into public and private fields on the server and selectively returned based on round state.
+The canonical public room snapshot must never include the solution before explicit reveal. Challenge data should be split into public and private server-side fields and selectively returned according to round state. The current core does not yet define the solution-storage schema.
 
 ## Candidate action types
 
@@ -51,12 +52,3 @@ Actions are proposals, not direct client-side state changes. Server-side authori
 ## Transport and persistence
 
 Supabase Auth, database persistence, realtime subscriptions and RPC/Edge Function design remain pending. The production project `atina-development` must not be used for experiments or destructive changes. No schema, permissions, records, or deployments have been changed.
-
-## Pure action reducer
-
-A transport-neutral reducer is available in `src/room/actions.js`. It checks expected revision, action identity, the caller-supplied allowlist and reducer callback, and returns the incremented canonical revision. Duplicate action keys can return the unchanged snapshot when the caller supplies a processed-key set. This helper is not a database transaction and does not itself persist idempotency keys; production must implement deduplication atomically alongside state updates.
-
-
-## Canonical action validation
-
-`src/room/validate-action.js` pre-validates allowlisted room lifecycle actions against canonical room state, authenticated participant identity, membership, host authority, answer uniqueness and trusted deadline. When a room carries a revision, the action's expected revision must match. This is a pure validation layer only: the backend must re-check and persist atomically to avoid races.

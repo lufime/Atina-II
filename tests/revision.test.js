@@ -15,8 +15,9 @@ test("revision increments safely", () => {
 });
 
 test("action keys scope client idempotency keys to participant", () => {
-  assert.equal(actionKey("p1", "a1"), "p1:a1");
+  assert.equal(actionKey("p1", "a1"), JSON.stringify(["p1", "a1"]));
   assert.notEqual(actionKey("p1", "a1"), actionKey("p2", "a1"));
+  assert.notEqual(actionKey("p1:a", "1"), actionKey("p1", "a:1"));
   assert.throws(() => actionKey("", "a1"), TypeError);
   assert.throws(() => actionKey("p1", " "), TypeError);
 });

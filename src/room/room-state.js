@@ -28,7 +28,7 @@ export function addPlayer(room, player, now = 0) {
 
 export function removePlayer(room, playerId, now = 0) {
   assertRoom(room);
-  if (typeof playerId !== "string" || !playerId.trim()) throw new TypeTypeError("Player id required");
+  if (typeof playerId !== "string" || !playerId.trim()) throw new TypeError("Player id required");
   if (!room.players.some(p => p.id === playerId)) throw new Error("Player not found");
   const players = room.players.filter(p => p.id !== playerId);
   const hostId = room.hostId === playerId ? (players[0]?.id ?? null) : room.hostId;

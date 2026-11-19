@@ -54,3 +54,16 @@ test("room can finish and is immutable by repeated finish", () => {
   assert.equal(r.state, "finished");
   assert.equal(finishRoom(r, 13), r);
 });
+
+test("rejects non-string player names instead of throwing on trim", () => {
+  const room = createRoom({ id: "r", hostId: "p1" });
+  assert.throws(() => addPlayer(room, { id: "p1", name: 42 }), TypeError);
+  assert.throws(() => addPlayer(room, { id: 42, name: "Ana" }), TypeError);
+  assert.throws(() => removePlayer(room, 42), TypeError);
+});
+
+test("answers require a finite timestamp and valid player id", () => {
+  const active = beginRound(startRoom(lobby()), { id: "round-1", challengeId: "c1" });
+  assert.throws(() => submitAnswer(active, { playerId: 42, text: "answer", submittedAt: 3 }), TypeError);
+  assert.throws(() => submitAnswer(active, { playerId: "p1", text: "answer", submittedAt: NaN }), TypeError);
+});

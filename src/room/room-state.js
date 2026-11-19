@@ -6,7 +6,7 @@ const assertRoom = (room) => {
 };
 
 export function createRoom({ id, hostId, createdAt = 0, maxPlayers = 8 } = {}) {
-  if (!id || !hostId) throw new TypeError("Room id and host id are required");
+  if (typeof id !== "string" || !id.trim() || typeof hostId !== "string" || !hostId.trim()) throw new TypeError("Room id and host id are required");
   if (!Number.isInteger(maxPlayers) || maxPlayers < 2 || maxPlayers > 32) {
     throw new RangeError("maxPlayers must be between 2 and 32");
   }
@@ -19,7 +19,7 @@ export function createRoom({ id, hostId, createdAt = 0, maxPlayers = 8 } = {}) {
 export function addPlayer(room, player, now = 0) {
   assertRoom(room);
   if (room.state !== "lobby") throw new Error("Players can only join a lobby");
-  if (!player?.id || !player?.name?.trim()) throw new TypeError("Player id and name are required");
+  if (typeof player?.id !== "string" || !player.id.trim() || typeof player?.name !== "string" || !player.name.trim()) throw new TypeError("Player id and name are required");
   if (room.players.some(p => p.id === player.id)) throw new Error("Player already in room");
   if (room.players.length >= room.maxPlayers) throw new Error("Room is full");
   const nextPlayer = { id: player.id, name: player.name.trim(), joinedAt: now };
@@ -28,6 +28,7 @@ export function addPlayer(room, player, now = 0) {
 
 export function removePlayer(room, playerId, now = 0) {
   assertRoom(room);
+  if (typeof playerId !== "string" || !playerId.trim()) throw new TypeTypeError("Player id required");
   if (!room.players.some(p => p.id === playerId)) throw new Error("Player not found");
   const players = room.players.filter(p => p.id !== playerId);
   const hostId = room.hostId === playerId ? (players[0]?.id ?? null) : room.hostId;
@@ -44,7 +45,7 @@ export function startRoom(room, now = 0) {
 export function beginRound(room, round, now = 0) {
   assertRoom(room);
   if (room.state !== "playing") throw new Error("Room is not in play");
-  if (!round?.id || !round?.challengeId) throw new TypeError("Round id and challenge id are required");
+  if (typeof round?.id !== "string" || !round.id.trim() || typeof round?.challengeId !== "string" || !round.challengeId.trim()) throw new TypeError("Round id and challenge id are required");
   if (room.currentRound && room.currentRound.status !== "finished") throw new Error("Previous round is not finished");
   return {
     ...room,
@@ -58,7 +59,9 @@ export function submitAnswer(room, { playerId, text, submittedAt } = {}) {
   const current = room.currentRound;
   if (room.state !== "playing" || current?.status !== "active") throw new Error("No active round");
   if (!room.players.some(p => p.id === playerId)) throw new Error("Player is not in this room");
+  if (typeof playerId !== "string" || !playerId.trim()) throw new TypeError("Player id is required");
   if (typeof text !== "string" || !text.trim()) throw new TypeError("Answer text is required");
+  if (!Number.isFinite(submittedAt)) throw new TypeError("Answer timestamp is required");
   if (current.answers.some(a => a.playerId === playerId)) throw new Error("Player already answered");
   const answer = { playerId, text: text.trim(), submittedAt };
   return { ...room, currentRound: { ...current, answers: [...current.answers, answer] }, updatedAt: submittedAt };

@@ -8,8 +8,10 @@ export function validateRoomAction(room, action, authenticatedPlayerId, now) {
   if (typeof authenticatedPlayerId !== "string" || !authenticatedPlayerId.trim()) errors.push("Authenticated identity required");
   if (!Number.isFinite(now)) errors.push("Trusted server timestamp required");
   if (typeof action.actionId !== "string" || !action.actionId.trim()) errors.push("actionId required");
+  if (!Number.isSafeInteger(room.revision) || room.revision < 0) errors.push("Room revision invalid");
   if (!Number.isSafeInteger(action.expectedRevision) || action.expectedRevision < 0) errors.push("expectedRevision invalid");
-  if (Number.isSafeInteger(room.revision) && action.expectedRevision !== room.revision) errors.push("Revision conflict");
+  if (Number.isSafeInteger(room.revision) && Number.isSafeInteger(action.expectedRevision) && action.expectedRevision !== room.revision) errors.push("Revision conflict");
+  if (action.payload !== undefined && (!action.payload || typeof action.payload !== "object" || Array.isArray(action.payload))) errors.push("Action payload must be an object");
   const host = room.hostId === authenticatedPlayerId;
   const member = Array.isArray(room.players) && room.players.some(p => p?.id === authenticatedPlayerId);
   const type = action.type;

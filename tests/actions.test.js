@@ -32,3 +32,11 @@ test("allowlist and trusted reducer are mandatory", () => {
 test("requires authenticated server context", () => {
   assert.throws(() => applyRoomAction(snap, env, { allowedActionTypes: ["room.join"], reducer: ctx.reducer }), /Authenticated player identity/);
 });
+
+
+test("rejects malformed action payload and action context lists", () => {
+  assert.throws(() => applyRoomAction(snap, { ...env, payload: [] }, ctx), /payload must be an object/);
+  assert.throws(() => applyRoomAction(snap, env, { ...ctx, processedActionKeys: "p1:a1" }), /processedActionKeys must be an array/);
+  assert.throws(() => applyRoomAction(snap, env, { ...ctx, allowedActionTypes: "room.join" }), /allowedActionTypes must be an array/);
+  assert.throws(() => applyRoomAction(snap, { ...env, type: " " }, ctx), /Action type required/);
+});

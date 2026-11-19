@@ -55,3 +55,8 @@ Supabase Auth, database persistence, realtime subscriptions and RPC/Edge Functio
 ## Pure action reducer
 
 A transport-neutral reducer is available in `src/room/actions.js`. It checks expected revision, action identity, the caller-supplied allowlist and reducer callback, and returns the incremented canonical revision. Duplicate action keys can return the unchanged snapshot when the caller supplies a processed-key set. This helper is not a database transaction and does not itself persist idempotency keys; production must implement deduplication atomically alongside state updates.
+
+
+## Canonical action validation
+
+`src/room/validate-action.js` pre-validates allowlisted room lifecycle actions against canonical room state, authenticated participant identity, membership, host authority, answer uniqueness and trusted deadline. When a room carries a revision, the action's expected revision must match. This is a pure validation layer only: the backend must re-check and persist atomically to avoid races.

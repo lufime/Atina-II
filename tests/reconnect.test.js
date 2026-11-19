@@ -41,3 +41,14 @@ test("public snapshot rejects invalid canonical room structure", () => {
   assert.throws(() => toPublicRoomSnapshot({ ...room, hostId: "missing" }), /host is invalid/);
   assert.throws(() => toPublicRoomSnapshot({ ...room, currentRound: { ...room.currentRound, answers: [{}] } }), /Canonical answer is invalid/);
 });
+
+
+test("allows an empty lobby snapshot with its intended host", () => {
+  const emptyLobby = { id:"new-room", state:"lobby", hostId:"p1", maxPlayers:8, revision:0, players:[], currentRound:null, createdAt:0, updatedAt:0, roundsPlayed:0 };
+  assert.equal(toPublicRoomSnapshot(emptyLobby).hostId, "p1");
+});
+
+test("rejects answers from non-members and duplicate player answers in snapshots", () => {
+  assert.throws(() => toPublicRoomSnapshot({ ...room, currentRound:{...room.currentRound, answers:[{playerId:"outsider",text:"x",submittedAt:1}]} }), /Canonical answer is invalid/);
+  assert.throws(() => toPublicRoomSnapshot({ ...room, currentRound:{...room.currentRound, answers:[{playerId:"p1",text:"x",submittedAt:1},{playerId:"p1",text:"y",submittedAt:2}]} }), /Canonical answer is invalid/);
+});

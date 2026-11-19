@@ -37,3 +37,11 @@ test("invalid states and values are rejected", () => {
   assert.throws(() => reconnectDelayMs(0), /positive integer/);
   assert.throws(() => markDisconnected({ state: "bad" }, 1), /Invalid connection state/);
 });
+
+
+test("connection state rejects malformed retry counters and timestamps", () => {
+  const valid = createConnectionState({ playerId: "p1", updatedAt: 12 });
+  assert.throws(() => markDisconnected({ ...valid, retryAttempt: Number.MAX_SAFE_INTEGER + 1 }, 13), /Invalid connection state/);
+  assert.throws(() => markDisconnected({ ...valid, updatedAt: NaN }, 13), /Invalid connection state/);
+  assert.throws(() => markDisconnected({ ...valid, playerId: " " }, 13), /Invalid connection state/);
+});

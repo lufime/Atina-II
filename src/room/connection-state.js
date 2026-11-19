@@ -18,6 +18,7 @@ export function beginReconnect(connection, now) {
   assertConnection(connection);
   assertTime(now);
   if (connection.state === "closed") throw new Error("Closed connection cannot reconnect");
+  if (connection.retryAttempt === Number.MAX_SAFE_INTEGER) throw new RangeError("Retry attempt limit reached");
   return { ...connection, state: "reconnecting", retryAttempt: connection.retryAttempt + 1, updatedAt: now };
 }
 

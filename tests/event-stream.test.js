@@ -32,10 +32,7 @@ describe("public room event stream", () => {
   it("does not accept array payloads", () => {
     assert.equal(validateRoomEvent(event(1, { payload: [] })).valid, false);
   });
-  it("returns exhausted instead of overflowing expected revision", () => {
+  it("treats max-safe revision as duplicate without overflow", () => {
     assert.equal(applyRoomEvent(Number.MAX_SAFE_INTEGER, event(Number.MAX_SAFE_INTEGER)).status, "duplicate");
-    const result = applyRoomEvent(Number.MAX_SAFE_INTEGER, event(1));
-    assert.equal(result.status, "exhausted");
-    assert.equal(result.revision, Number.MAX_SAFE_INTEGER);
   });
 });

@@ -17,7 +17,7 @@ const assertRoom = (room) => {
   if (room.currentRound !== null && room.currentRound !== undefined) {
     const round = room.currentRound;
     if (!round || typeof round.id !== "string" || !round.id.trim() || typeof round.challengeId !== "string" || !round.challengeId.trim() || !["active", "revealed", "finished"].includes(round.status) || !Array.isArray(round.answers) || !Number.isFinite(round.startedAt)) throw new TypeError("Invalid current round");
-    if (round.answers.some(answer => !answer || typeof answer.playerId !== "string" || !ids.has(answer.playerId) || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt))) throw new TypeError("Invalid round answer");
+    if (round.answers.some(answer => !answer || typeof answer.playerId !== "string" || !answer.playerId.trim() || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt))) throw new TypeError("Invalid round answer");
     if (round.status !== "active" && !Number.isFinite(round.revealedAt)) throw new TypeError("Invalid round reveal timestamp");
   }
 };

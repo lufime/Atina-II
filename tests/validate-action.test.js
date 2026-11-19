@@ -22,3 +22,8 @@ test("rejects malformed envelopes and unknown actions",()=>{
  assert.ok(validateRoomAction(room,{...base,actionId:" "},"p1",10).errors.includes("actionId required"));
  assert.ok(validateRoomAction(room,{...base,type:"alien.action"},"p1",10).errors.includes("Unknown action type"));
 });
+
+test("rejects stale room revision",()=>{
+ const revisionRoom={...room,revision:7};
+ assert.ok(validateRoomAction(revisionRoom,{...base,expectedRevision:6},"p2",999).errors.includes("Revision conflict"));
+});

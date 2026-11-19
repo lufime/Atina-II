@@ -4,6 +4,22 @@ const assertTime = (time) => { if (!Number.isFinite(time)) throw new TypeError("
 const assertRoom = (room) => {
   if (!room || !ROOM_STATES.includes(room.state)) throw new TypeError("Invalid room");
   if (!Array.isArray(room.players)) throw new TypeError("Room players must be an array");
+  if (!Number.isInteger(room.maxPlayers) || room.maxPlayers < 2 || room.maxPlayers > 32 || room.players.length > room.maxPlayers) throw new TypeError("Invalid room capacity");
+  const ids = new Set();
+  for (const player of room.players) {
+    if (!player || typeof player.id !== "string" || !player.id.trim() || typeof player.name !== "string" || !player.name.trim() || !Number.isFinite(player.joinedAt)) throw new TypeError("Invalid room player");
+    if (ids.has(player.id)) throw new Error("Duplicate player in room");
+    ids.add(player.id);
+  }
+  if (room.hostId !== null && (typeof room.hostId !== "string" || !ids.has(room.hostId))) throw new TypeError("Room host must be a member");
+  if (room.players.length === 0 && room.hostId !== null) throw new TypeError("Empty room cannot have a host");
+  if (!Number.isSafeInteger(room.roundsPlayed) || room.roundsPlayed < 0 || !Number.isFinite(room.createdAt) || !Number.isFinite(room.updatedAt)) throw new TypeError("Invalid room counters or timestamps");
+  if (room.currentRound !== null && room.currentRound !== undefined) {
+    const round = room.currentRound;
+    if (!round || typeof round.id !== "string" || !round.id.trim() || typeof round.challengeId !== "string" || !round.challengeId.trim() || !["active", "revealed", "finished"].includes(round.status) || !Array.isArray(round.answers) || !Number.isFinite(round.startedAt)) throw new TypeError("Invalid current round");
+    if (round.answers.some(answer => !answer || typeof answer.playerId !== "string" || !ids.has(answer.playerId) || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt))) throw new TypeError("Invalid round answer");
+    if (round.status !== "active" && !Number.isFinite(round.revealedAt)) throw new TypeError("Invalid round reveal timestamp");
+  }
 };
 
 export function createRoom({ id, hostId, createdAt = 0, maxPlayers = 8 } = {}) {

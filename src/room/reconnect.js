@@ -22,7 +22,7 @@ export function toPublicRoomSnapshot(room) {
     if (playerIds.has(player.id)) throw new Error("Canonical room contains duplicate players");
     playerIds.add(player.id);
   }
-  if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && !playerIds.has(room.hostId)))) throw new TypeError("Canonical room host is invalid");
+  if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && room.state !== "lobby" && !playerIds.has(room.hostId)))) throw new TypeError("Canonical room host is invalid");
   const publicRoom = pick(room, PUBLIC_ROOM_FIELDS);
   publicRoom.players = room.players.map(player => pick(player, PUBLIC_PLAYER_FIELDS));
   if (room.currentRound && typeof room.currentRound === "object") {

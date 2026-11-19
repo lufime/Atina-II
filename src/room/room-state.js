@@ -58,7 +58,11 @@ export function removePlayer(room, playerId, now = 0) {
   if (!room.players.some(p => p.id === playerId)) throw new Error("Player not found");
   const players = room.players.filter(p => p.id !== playerId);
   const hostId = room.hostId === playerId ? (players[0]?.id ?? null) : room.hostId;
-  return { ...room, players, hostId, state: players.length === 0 ? "finished" : room.state, updatedAt: now };
+  const state = players.length < 2 && room.state === "playing" ? "finished" : players.length === 0 ? "finished" : room.state;
+  const currentRound = room.currentRound && Array.isArray(room.currentRound.answers)
+    ? { ...room.currentRound, answers: room.currentRound.answers.filter(answer => answer.playerId !== playerId) }
+    : room.currentRound;
+  return { ...room, players, hostId, currentRound, state, updatedAt: now };
 }
 
 export function startRoom(room, now = 0) {

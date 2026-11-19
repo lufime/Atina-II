@@ -19,7 +19,7 @@ test("rejects stale revision and identity mismatch", () => {
 });
 
 test("known duplicate action returns unchanged snapshot even with stale revision", () => {
-  const result = applyRoomAction(snap, { ...env, expectedRevision: 1 }, { ...ctx, processedActionKeys: ["p1:a1"] });
+  const result = applyRoomAction(snap, { ...env, expectedRevision: 1 }, { ...ctx, processedActionKeys: [JSON.stringify(["p1", "a1"])] });
   assert.equal(result.duplicate, true);
   assert.equal(result.snapshot, snap);
 });

@@ -49,7 +49,7 @@ export function reconnectDelayMs(attempt, { baseDelayMs = 500, maxDelayMs = 1500
 }
 
 function assertConnection(connection) {
-  if (!connection || !CONNECTION_STATES.includes(connection.state) || typeof connection.playerId !== "string" || !Number.isSafeInteger(connection.retryAttempt) || connection.retryAttempt < 0 || !Number.isSafeInteger(connection.lastRevision) || connection.lastRevision < 0) throw new TypeError("Invalid connection state");
+  if (!connection || !CONNECTION_STATES.includes(connection.state) || typeof connection.playerId !== "string" || !connection.playerId.trim() || !Number.isSafeInteger(connection.retryAttempt) || connection.retryAttempt < 0 || !Number.isSafeInteger(connection.lastRevision) || connection.lastRevision < 0 || !Number.isFinite(connection.updatedAt)) throw new TypeError("Invalid connection state");
 }
 function assertRevision(revision) {
   if (!Number.isSafeInteger(revision) || revision < 0) throw new TypeError("revision must be a non-negative integer");

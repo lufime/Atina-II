@@ -8,7 +8,7 @@ export function validateRoomAction(room, action, authenticatedPlayerId, now) {
   if (typeof authenticatedPlayerId !== "string" || !authenticatedPlayerId.trim()) errors.push("Authenticated identity required");
   if (!Number.isFinite(now)) errors.push("Trusted server timestamp required");
   if (typeof action.actionId !== "string" || !action.actionId.trim()) errors.push("actionId required");
-  if (!Number.isSafeInteger(room.revision) || room.revision < 0) errors.push("Room revision invalid");
+  if (!Number.isSafeInteger(room.revision) || room.revision < 0) errors.push("Room revision invalid");\n  if (!Array.isArray(room.players)) errors.push("Room players invalid");\n  if (!Number.isInteger(room.maxPlayers) || room.maxPlayers < 2 || room.maxPlayers > 32) errors.push("Room capacity invalid");\n  if (Array.isArray(room.players) && Number.isInteger(room.maxPlayers) && room.players.length > room.maxPlayers) errors.push("Room exceeds capacity");
   if (!Number.isSafeInteger(action.expectedRevision) || action.expectedRevision < 0) errors.push("expectedRevision invalid");
   if (Number.isSafeInteger(room.revision) && Number.isSafeInteger(action.expectedRevision) && action.expectedRevision !== room.revision) errors.push("Revision conflict");
   if (action.payload !== undefined && (!action.payload || typeof action.payload !== "object" || Array.isArray(action.payload))) errors.push("Action payload must be an object");

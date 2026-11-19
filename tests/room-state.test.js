@@ -96,3 +96,23 @@ test("round snapshot rejects duplicate or non-member answers and missing finishe
   const invalidFinished = { ...active, currentRound: { ...active.currentRound, status: "finished", revealedAt: 2 } };
   assert.throws(() => beginRound(invalidFinished, { id: "next", challengeId: "c2" }), /Invalid round finish timestamp/);
 });
+
+
+test("player departure during active round removes stale answer and ends undersized room", () => {
+  let r = beginRound(startRoom(lobby(), 5), { id: "round-1", challengeId: "c1" }, 6);
+  r = submitAnswer(r, { playerId: "p1", text: "answer", submittedAt: 7 });
+  r = removePlayer(r, "p1", 8);
+  assert.equal(r.hostId, "p2");
+  assert.equal(r.players.length, 1);
+  assert.equal(r.state, "finished");
+  assert.deepEqual(r.currentRound.answers, []);
+});
+
+test("leaving player answer is removed while room remains playable", () => {
+  const r = beginRound(startRoom(lobby(), 5), { id: "round-1", challengeId: "c1" }, 6);
+  const answered = submitAnswer(r, { playerId: "p1", text: "answer", submittedAt: 7 });
+  const next = removePlayer(answered, "p2", 8);
+  assert.equal(next.state, "playing");
+  assert.equal(next.hostId, "p1");
+  assert.deepEqual(next.currentRound.answers, [{ playerId: "p1", text: "answer", submittedAt: 7 }]);
+});

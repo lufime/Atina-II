@@ -33,3 +33,9 @@ test("requires safe room revision and object payload",()=>{
  assert.ok(validateRoomAction(noRev,base,"p2",500).errors.includes("Room revision invalid"));
  assert.ok(validateRoomAction(room,{...base,payload:[]},"p2",500).errors.includes("Action payload must be an object"));
 });
+
+
+test("rejects invalid room capacity configuration", () => {
+ assert.ok(validateRoomAction({...room,maxPlayers:1},base,"p2",500).errors.includes("Room capacity invalid"));
+ assert.ok(validateRoomAction({...room,maxPlayers:2,players:[...room.players,{id:"p3"}]},base,"p2",500).errors.includes("Room exceeds capacity"));
+});

@@ -31,7 +31,6 @@ export function applyRoomEvent(lastRevision, event) {
   const validation = validateRoomEvent(event);
   if (!validation.valid) return { status: "invalid", errors: validation.errors, revision: lastRevision };
   if (event.revision <= lastRevision) return { status: "duplicate", revision: lastRevision };
-  if (lastRevision === Number.MAX_SAFE_INTEGER) return { status: "exhausted", revision: lastRevision };
   const expectedRevision = lastRevision + 1;
   if (event.revision !== expectedRevision) return { status: "gap", revision: lastRevision, expectedRevision, receivedRevision: event.revision };
   return { status: "applied", revision: event.revision, event };

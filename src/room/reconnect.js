@@ -14,13 +14,24 @@ export function toPublicRoomSnapshot(room) {
   if (!room || typeof room !== "object" || !Number.isSafeInteger(room.revision) || room.revision < 0) {
     throw new TypeError("Canonical room with a non-negative revision required");
   }
+  if (!Array.isArray(room.players)) throw new TypeError("Canonical room players must be an array");
+  if (!Number.isInteger(room.maxPlayers) || room.maxPlayers < 2 || room.maxPlayers > 32 || room.players.length > room.maxPlayers) throw new TypeError("Canonical room capacity is invalid");
+  const playerIds = new Set();
+  for (const player of room.players) {
+    if (!player || typeof player.id !== "string" || !player.id.trim() || typeof player.name !== "string" || !player.name.trim() || !Number.isFinite(player.joinedAt)) throw new TypeError("Canonical player is invalid");
+    if (playerIds.has(player.id)) throw new Error("Canonical room contains duplicate players");
+    playerIds.add(player.id);
+  }
+  if (room.hostId !== null && (typeof room.hostId !== "string" || !playerIds.has(room.hostId))) throw new TypeError("Canonical room host is invalid");
+  if (room.players.length === 0 && room.hostId !== null) throw new TypeError("Empty room cannot have a host");
   const publicRoom = pick(room, PUBLIC_ROOM_FIELDS);
-  publicRoom.players = Array.isArray(room.players) ? room.players.map(player => pick(player, PUBLIC_PLAYER_FIELDS)) : [];
+  publicRoom.players = room.players.map(player => pick(player, PUBLIC_PLAYER_FIELDS));
   if (room.currentRound && typeof room.currentRound === "object") {
-    publicRoom.currentRound = pick(room.currentRound, PUBLIC_ROUND_FIELDS);
-    publicRoom.currentRound.answers = Array.isArray(room.currentRound.answers)
-      ? room.currentRound.answers.map(answer => pick(answer, PUBLIC_ANSWER_FIELDS))
-      : [];
+    const current = room.currentRound;
+    if (typeof current.id !== "string" || !current.id.trim() || typeof current.challengeId !== "string" || !current.challengeId.trim() || !["active", "revealed", "finished"].includes(current.status) || !Number.isFinite(current.startedAt) || !Array.isArray(current.answers)) throw new TypeError("Canonical round is invalid");
+    if (current.answers.some(answer => !answer || typeof answer.playerId !== "string" || !answer.playerId.trim() || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt))) throw new TypeError("Canonical answer is invalid");
+    publicRoom.currentRound = pick(current, PUBLIC_ROUND_FIELDS);
+    publicRoom.currentRound.answers = current.answers.map(answer => pick(answer, PUBLIC_ANSWER_FIELDS));
   } else publicRoom.currentRound = null;
   return publicRoom;
 }

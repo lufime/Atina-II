@@ -5,7 +5,9 @@ import { createRoom, addPlayer, removePlayer, startRoom, beginRound, submitAnswe
 const lobby = () => addPlayer(addPlayer(createRoom({ id: "r1", hostId: "p1", maxPlayers: 3 }), { id: "p1", name: "Ana" }, 1), { id: "p2", name: "João" }, 2);
 
 test("room creation validates inputs and starts empty lobby", () => {
-  assert.equal(createRoom({ id: "x", hostId: "p1" }).state, "lobby");
+  const empty = createRoom({ id: "x", hostId: "p1" });
+  assert.equal(empty.state, "lobby");
+  assert.equal(addPlayer(empty, { id: "p1", name: "Ana" }, 1).players.length, 1);
   assert.throws(() => createRoom({ id: "x" }), TypeError);
   assert.throws(() => createRoom({ id: "x", hostId: "p1", maxPlayers: 1 }), RangeError);
 });
@@ -84,4 +86,13 @@ test("room transitions reject inconsistent snapshots", () => {
   assert.throws(() => startRoom({ ...valid, players: [valid.players[0], valid.players[0]] }), /Duplicate player/);
   assert.throws(() => startRoom({ ...valid, maxPlayers: 1 }), /Invalid room capacity/);
   assert.throws(() => startRoom({ ...valid, currentRound: { id: "x", challengeId: "c", status: "active", startedAt: 0, answers: [{ playerId: "", text: "a", submittedAt: 1 }] } }), /Invalid round answer/);
+});
+
+test("round snapshot rejects duplicate or non-member answers and missing finishedAt", () => {
+  const active = beginRound(startRoom(lobby()), { id: "round-1", challengeId: "c1" });
+  const answer = { playerId: "p1", text: "ok", submittedAt: 1 };
+  assert.throws(() => revealRound({ ...active, currentRound: { ...active.currentRound, answers: [answer, answer] } }), /Invalid round answer/);
+  assert.throws(() => revealRound({ ...active, currentRound: { ...active.currentRound, answers: [{ ...answer, playerId: "outside" }] } }), /Invalid round answer/);
+  const revealed = revealRound(active, 3);
+  assert.throws(() => finishRound({ ...revealed, currentRound: { ...revealed.currentRound, finishedAt: undefined } }), /Invalid round finish timestamp/);
 });

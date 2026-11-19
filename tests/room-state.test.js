@@ -76,3 +76,12 @@ test("room transitions reject invalid timestamps",()=>{
  assert.throws(()=>beginRound(startRoom(lobby()),{id:"round",challengeId:"c"},Infinity),TypeError);
  assert.throws(()=>revealRound(beginRound(startRoom(lobby()),{id:"round",challengeId:"c"}),NaN),TypeError);
 });
+
+
+test("room transitions reject inconsistent snapshots", () => {
+  const valid = lobby();
+  assert.throws(() => startRoom({ ...valid, hostId: "missing" }), /host must be a member/);
+  assert.throws(() => startRoom({ ...valid, players: [valid.players[0], valid.players[0]] }), /Duplicate player/);
+  assert.throws(() => startRoom({ ...valid, maxPlayers: 1 }), /Invalid room capacity/);
+  assert.throws(() => startRoom({ ...valid, currentRound: { id: "x", challengeId: "c", status: "active", startedAt: 0, answers: [{ playerId: "unknown", text: "a", submittedAt: 1 }] } }), /Invalid round answer/);
+});

@@ -6,7 +6,7 @@ export function createRoundClock({ startedAt, durationMs } = {}) {
 }
 
 export function isRoundExpired(clock, now) {
-  if (!clock || !Number.isFinite(clock.deadlineAt) || !Number.isFinite(now)) throw new TypeTypeError("Valid clock and timestamp required");
+  if (!clock || !Number.isFinite(clock.deadlineAt) || !Number.isFinite(now)) throw new TypeError("Valid clock and timestamp required");
   return now >= clock.deadlineAt;
 }
 

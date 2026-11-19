@@ -83,5 +83,5 @@ test("room transitions reject inconsistent snapshots", () => {
   assert.throws(() => startRoom({ ...valid, hostId: "missing" }), /host must be a member/);
   assert.throws(() => startRoom({ ...valid, players: [valid.players[0], valid.players[0]] }), /Duplicate player/);
   assert.throws(() => startRoom({ ...valid, maxPlayers: 1 }), /Invalid room capacity/);
-  assert.throws(() => startRoom({ ...valid, currentRound: { id: "x", challengeId: "c", status: "active", startedAt: 0, answers: [{ playerId: "unknown", text: "a", submittedAt: 1 }] } }), /Invalid round answer/);
+  assert.throws(() => startRoom({ ...valid, currentRound: { id: "x", challengeId: "c", status: "active", startedAt: 0, answers: [{ playerId: "", text: "a", submittedAt: 1 }] } }), /Invalid round answer/);
 });

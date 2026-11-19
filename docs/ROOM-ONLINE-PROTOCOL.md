@@ -51,3 +51,7 @@ Actions are proposals, not direct client-side state changes. Server-side authori
 ## Transport and persistence
 
 Supabase Auth, database persistence, realtime subscriptions and RPC/Edge Function design remain pending. The production project `atina-development` must not be used for experiments or destructive changes. No schema, permissions, records, or deployments have been changed.
+
+## Pure action reducer
+
+A transport-neutral reducer is available in `src/room/actions.js`. It checks expected revision, action identity, the caller-supplied allowlist and reducer callback, and returns the incremented canonical revision. Duplicate action keys can return the unchanged snapshot when the caller supplies a processed-key set. This helper is not a database transaction and does not itself persist idempotency keys; production must implement deduplication atomically alongside state updates.

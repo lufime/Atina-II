@@ -11,14 +11,20 @@ const assertRoom = (room) => {
     if (ids.has(player.id)) throw new Error("Duplicate player in room");
     ids.add(player.id);
   }
-  if (room.hostId !== null && (typeof room.hostId !== "string" || !ids.has(room.hostId))) throw new TypeError("Room host must be a member");
-  if (room.players.length === 0 && room.hostId !== null) throw new TypeError("Empty room cannot have a host");
+  if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && !ids.has(room.hostId)))) throw new TypeError("Room host must be a member");
+  // A newly created lobby may hold its intended host ID before the host joins.
+
   if (!Number.isSafeInteger(room.roundsPlayed) || room.roundsPlayed < 0 || !Number.isFinite(room.createdAt) || !Number.isFinite(room.updatedAt)) throw new TypeError("Invalid room counters or timestamps");
   if (room.currentRound !== null && room.currentRound !== undefined) {
     const round = room.currentRound;
     if (!round || typeof round.id !== "string" || !round.id.trim() || typeof round.challengeId !== "string" || !round.challengeId.trim() || !["active", "revealed", "finished"].includes(round.status) || !Array.isArray(round.answers) || !Number.isFinite(round.startedAt)) throw new TypeError("Invalid current round");
-    if (round.answers.some(answer => !answer || typeof answer.playerId !== "string" || !answer.playerId.trim() || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt))) throw new TypeError("Invalid round answer");
+    const answered = new Set();
+    for (const answer of round.answers) {
+      if (!answer || typeof answer.playerId !== "string" || !ids.has(answer.playerId) || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt) || answered.has(answer.playerId)) throw new TypeError("Invalid round answer");
+      answered.add(answer.playerId);
+    }
     if (round.status !== "active" && !Number.isFinite(round.revealedAt)) throw new TypeError("Invalid round reveal timestamp");
+    if (round.status === "finished" && !Number.isFinite(round.finishedAt)) throw new TypeError("Invalid round finish timestamp");
   }
 };
 

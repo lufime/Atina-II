@@ -58,8 +58,8 @@ export function submitAnswer(room, { playerId, text, submittedAt } = {}) {
   assertRoom(room);
   const current = room.currentRound;
   if (room.state !== "playing" || current?.status !== "active") throw new Error("No active round");
-  if (!room.players.some(p => p.id === playerId)) throw new Error("Player is not in this room");
   if (typeof playerId !== "string" || !playerId.trim()) throw new TypeError("Player id is required");
+  if (!room.players.some(p => p.id === playerId)) throw new Error("Player is not in this room");
   if (typeof text !== "string" || !text.trim()) throw new TypeError("Answer text is required");
   if (!Number.isFinite(submittedAt)) throw new TypeError("Answer timestamp is required");
   if (current.answers.some(a => a.playerId === playerId)) throw new Error("Player already answered");

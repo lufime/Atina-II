@@ -8,8 +8,9 @@ export function applyRoomAction(snapshot, envelope, context = {}) {
   if (!envelope || typeof envelope.actionId !== "string" || !envelope.actionId.trim()) throw new TypeError("actionId required");
   if (!envelope.type || typeof envelope.type !== "string") throw new TypeError("Action type required");
   assertExpectedRevision(snapshot.revision, envelope.expectedRevision);
-  if (context.playerId && envelope.playerId && context.playerId !== envelope.playerId) throw new Error("Authenticated identity mismatch");
-  const key = actionKey(envelope.playerId || context.playerId, envelope.actionId);
+  if (typeof context.playerId !== "string" || !context.playerId.trim()) throw new TypeError("Authenticated player identity required");
+  if (envelope.playerId && context.playerId !== envelope.playerId) throw new Error("Authenticated identity mismatch");
+  const key = actionKey(context.playerId, envelope.actionId);
   const knownKeys = context.processedActionKeys ?? [];
   if (knownKeys.includes(key)) return { snapshot, duplicate: true, actionKey: key };
   const allowed = context.allowedActionTypes ?? [];

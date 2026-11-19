@@ -116,3 +116,12 @@ test("leaving player answer is removed while room remains playable", () => {
   assert.equal(next.hostId, "p1");
   assert.deepEqual(next.currentRound.answers, [{ playerId: "p1", text: "answer", submittedAt: 7 }]);
 });
+
+
+test("lobby accepts early joiners while reserved host has not arrived", () => {
+  const room = createRoom({ id: "r", hostId: "host", maxPlayers: 4 });
+  const joined = addPlayer(room, { id: "guest", name: "Guest" }, 1);
+  assert.equal(joined.players.length, 1);
+  assert.equal(joined.hostId, "host");
+  assert.doesNotThrow(() => addPlayer(joined, { id: "host", name: "Host" }, 2));
+});

@@ -29,7 +29,7 @@ export function toPublicRoomSnapshot(room) {
   if (room.currentRound && typeof room.currentRound === "object") {
     const current = room.currentRound;
     if (typeof current.id !== "string" || !current.id.trim() || typeof current.challengeId !== "string" || !current.challengeId.trim() || !["active", "revealed", "finished"].includes(current.status) || !Number.isFinite(current.startedAt) || !Array.isArray(current.answers)) throw new TypeError("Canonical round is invalid");
-    if (current.answers.some(answer => !answer || typeof answer.playerId !== "string" || !answer.playerId.trim() || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt))) throw new TypeError("Canonical answer is invalid");
+    const answered = new Set();\n    for (const answer of current.answers) {\n      if (!answer || typeof answer.playerId !== "string" || !playerIds.has(answer.playerId) || answered.has(answer.playerId) || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt)) throw new TypeError("Canonical answer is invalid");\n      answered.add(answer.playerId);\n    }
     publicRoom.currentRound = pick(current, PUBLIC_ROUND_FIELDS);
     publicRoom.currentRound.answers = current.answers.map(answer => pick(answer, PUBLIC_ANSWER_FIELDS));
   } else publicRoom.currentRound = null;

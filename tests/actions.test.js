@@ -28,3 +28,7 @@ test("allowlist and trusted reducer are mandatory", () => {
   assert.throws(() => applyRoomAction(snap, env, { ...ctx, allowedActionTypes: [] }), /not allowed/);
   assert.throws(() => applyRoomAction(snap, env, { playerId: "p1", allowedActionTypes: ["room.join"] }), /reducer required/);
 });
+
+test("requires authenticated server context", () => {
+  assert.throws(() => applyRoomAction(snap, env, { allowedActionTypes: ["room.join"], reducer: ctx.reducer }), /Authenticated player identity/);
+});

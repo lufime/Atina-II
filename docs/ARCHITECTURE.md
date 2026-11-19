@@ -34,3 +34,8 @@ As transições concretas, timer e regras de pontuação precisam de validação
 - Configuração local e testes não usam credenciais reais.
 - Supabase `atina-development` é produção: não executar alterações de schema, permissões, limpeza ou dados nesse projeto sem revisão explícita.
 - Backend deverá validar sessão/token, participante, ronda, prazo e ação antes de aceitar alterações.
+
+
+## Snapshot integrity
+
+The pure validator in `src/room/validate-room.js` checks canonical room snapshots for structural consistency (member/host membership, duplicate players and answers, answer ownership, timestamps, round status). Use it at persistence boundaries and in tests; it is a validation helper, not authorization or a substitute for transactional backend constraints.

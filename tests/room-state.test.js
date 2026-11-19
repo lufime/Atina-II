@@ -93,6 +93,6 @@ test("round snapshot rejects duplicate or non-member answers and missing finishe
   const answer = { playerId: "p1", text: "ok", submittedAt: 1 };
   assert.throws(() => revealRound({ ...active, currentRound: { ...active.currentRound, answers: [answer, answer] } }), /Invalid round answer/);
   assert.throws(() => revealRound({ ...active, currentRound: { ...active.currentRound, answers: [{ ...answer, playerId: "outside" }] } }), /Invalid round answer/);
-  const revealed = revealRound(active, 3);
-  assert.throws(() => finishRound({ ...revealed, currentRound: { ...revealed.currentRound, finishedAt: undefined } }), /Invalid round finish timestamp/);
+  const invalidFinished = { ...active, currentRound: { ...active.currentRound, status: "finished", revealedAt: 2 } };
+  assert.throws(() => beginRound(invalidFinished, { id: "next", challengeId: "c2" }), /Invalid round finish timestamp/);
 });

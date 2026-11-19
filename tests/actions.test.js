@@ -18,8 +18,8 @@ test("rejects stale revision and identity mismatch", () => {
   assert.throws(() => applyRoomAction(snap, { ...env, playerId: "p2" }, ctx), /identity mismatch/);
 });
 
-test("known duplicate action returns unchanged snapshot", () => {
-  const result = applyRoomAction(snap, env, { ...ctx, processedActionKeys: ["p1:a1"] });
+test("known duplicate action returns unchanged snapshot even with stale revision", () => {
+  const result = applyRoomAction(snap, { ...env, expectedRevision: 1 }, { ...ctx, processedActionKeys: ["p1:a1"] });
   assert.equal(result.duplicate, true);
   assert.equal(result.snapshot, snap);
 });

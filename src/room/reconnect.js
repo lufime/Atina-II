@@ -22,14 +22,17 @@ export function toPublicRoomSnapshot(room) {
     if (playerIds.has(player.id)) throw new Error("Canonical room contains duplicate players");
     playerIds.add(player.id);
   }
-  if (room.hostId !== null && (typeof room.hostId !== "string" || !playerIds.has(room.hostId))) throw new TypeError("Canonical room host is invalid");
-  if (room.players.length === 0 && room.hostId !== null) throw new TypeError("Empty room cannot have a host");
+  if (room.hostId !== null && (typeof room.hostId !== "string" || !room.hostId.trim() || (room.players.length > 0 && !playerIds.has(room.hostId)))) throw new TypeError("Canonical room host is invalid");
   const publicRoom = pick(room, PUBLIC_ROOM_FIELDS);
   publicRoom.players = room.players.map(player => pick(player, PUBLIC_PLAYER_FIELDS));
   if (room.currentRound && typeof room.currentRound === "object") {
     const current = room.currentRound;
     if (typeof current.id !== "string" || !current.id.trim() || typeof current.challengeId !== "string" || !current.challengeId.trim() || !["active", "revealed", "finished"].includes(current.status) || !Number.isFinite(current.startedAt) || !Array.isArray(current.answers)) throw new TypeError("Canonical round is invalid");
-    const answered = new Set();\n    for (const answer of current.answers) {\n      if (!answer || typeof answer.playerId !== "string" || !playerIds.has(answer.playerId) || answered.has(answer.playerId) || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt)) throw new TypeError("Canonical answer is invalid");\n      answered.add(answer.playerId);\n    }
+    const answered = new Set();
+    for (const answer of current.answers) {
+      if (!answer || typeof answer.playerId !== "string" || !playerIds.has(answer.playerId) || answered.has(answer.playerId) || typeof answer.text !== "string" || !answer.text.trim() || !Number.isFinite(answer.submittedAt)) throw new TypeError("Canonical answer is invalid");
+      answered.add(answer.playerId);
+    }
     publicRoom.currentRound = pick(current, PUBLIC_ROUND_FIELDS);
     publicRoom.currentRound.answers = current.answers.map(answer => pick(answer, PUBLIC_ANSWER_FIELDS));
   } else publicRoom.currentRound = null;

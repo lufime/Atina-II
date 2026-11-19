@@ -19,5 +19,5 @@ export function nextRevision(currentRevision) {
 export function actionKey(playerId, actionId) {
   if (typeof playerId !== "string" || !playerId.trim()) throw new TypeError("Player id required");
   if (typeof actionId !== "string" || !actionId.trim()) throw new TypeError("Action id required");
-  return `${playerId.trim()}:${actionId.trim()}`;
+  return JSON.stringify([playerId.trim(), actionId.trim()]);
 }

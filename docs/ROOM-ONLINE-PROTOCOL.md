@@ -28,3 +28,11 @@ The solution must remain private until the explicit reveal transition. Current c
 ## Persistence and realtime
 
 Auth, persistence, realtime subscriptions, atomic RPC/Edge Functions, and database integration remain pending. Supabase project `atina-development` is production: do not run experiments, destructive changes, schema updates, permission changes, or deploys against it without explicit review.
+
+
+## Public event ordering (transport-neutral)
+
+- Public events carry roomId, strictly increasing revision, supported type, serverTime and allowlisted payload.
+- The client applies only the next revision. Stale/duplicate events are ignored; revision gaps require snapshot resynchronization.
+- Unknown event types and payload fields are rejected. Challenge solutions, private data and auth/session fields are not public event payloads.
+- This helper does not establish a realtime transport or persist events; the server must publish authoritative events and snapshots.

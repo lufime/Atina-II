@@ -34,3 +34,10 @@ test("rejects malformed revision inputs", () => {
   assert.throws(() => getRoomSyncResponse(room, -1), /non-negative integer/);
   assert.throws(() => toPublicRoomSnapshot({ ...room, revision: NaN }), /revision required/);
 });
+
+
+test("public snapshot rejects invalid canonical room structure", () => {
+  assert.throws(() => toPublicRoomSnapshot({ ...room, players: [{}] }), /Canonical player is invalid/);
+  assert.throws(() => toPublicRoomSnapshot({ ...room, hostId: "missing" }), /host is invalid/);
+  assert.throws(() => toPublicRoomSnapshot({ ...room, currentRound: { ...room.currentRound, answers: [{}] } }), /Canonical answer is invalid/);
+});

@@ -1,0 +1,1786 @@
+/* ATINA server-authoritative client. No answer keys are shipped to the browser. */
+const ATINA_SERVER_SESSION_KEY = 'atinaServerSessionV1';
+let atinaServerSession = null;
+let atinaServerState = null;
+let atinaServerTimer = null;
+let atinaServerPolling = null;
+let atinaServerBusy = false;
+let atinaServerAutoRevealAt = 0;
+let atinaServerAutoRevealTriggered = false;
+let atinaServerLastResult = '{}';
+let atinaServerLastSpokenSolution = ''; // evita repetir a leitura durante atualizações/polling
+let atinaNetworkChallengeKey = '';
+let atinaNetworkFeedback = '';
+
+async function atinaServerRpc(name, args) {
+  if (!supabaseClient) throw new Error('É necessária uma ligação à Internet para jogar. Atualiza a página e tenta novamente.');
+  const { data, error } = await supabaseClient.rpc(name, args);
+  if (error) throw error;
+  return data;
+}
+
+const ATINA_ACCOUNT_SESSION_KEY = 'atinaAccountSessionV1';
+function atinaAccountSessionToken() { return localStorage.getItem(ATINA_ACCOUNT_SESSION_KEY) || ''; }
+const ATINA_PROGRESS_DEVICE_KEY = 'atinaProgressDeviceTokenV1';
+const ATINA_PROGRESS_NICKNAME_KEY = 'atinaProgressNicknameV1';
+let atinaCloudProfile = null;
+const atinaCloudClaimsInFlight = new Set();
+const atinaCloudClaimsDone = new Set();
+
+function atinaProgressDeviceToken(createIfMissing = true) {
+  let token = localStorage.getItem(ATINA_PROGRESS_DEVICE_KEY) || '';
+  if (/^[0-9a-f]{64}$/.test(token)) return token;
+  if (!createIfMissing) return null;
+  if (!window.crypto?.getRandomValues) throw new Error('Este navegador não permite criar um identificador seguro para o dispositivo.');
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  token = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem(ATINA_PROGRESS_DEVICE_KEY, token);
+  return token;
+}
+
+let atinaQiScoreInFlight = false;
+let atinaQiScoreLastAt = 0;
+let atinaQiScorePlayerId = '';
+
+async function atinaProgressLoadMyQi(profile) {
+  const scoreNode = $('atinaCloudQi');
+  const metaNode = $('atinaCloudQiMeta');
+  if (!scoreNode) return;
+
+  const sessionToken = atinaAccountSessionToken();
+  if (!profile?.player_id || !sessionToken) {
+    scoreNode.textContent = '🧠 QI ATINA: —';
+    if (metaNode) metaNode.textContent = 'Entra na conta para consultar o teu indicador.';
+    return;
+  }
+
+  const playerId = String(profile.player_id);
+  if (atinaQiScoreInFlight) return;
+  if (atinaQiScorePlayerId === playerId && Date.now() - atinaQiScoreLastAt < 2000) return;
+
+  atinaQiScoreInFlight = true;
+  atinaQiScorePlayerId = playerId;
+  atinaQiScoreLastAt = Date.now();
+  scoreNode.textContent = '🧠 QI ATINA: a calcular…';
+  if (metaNode) metaNode.textContent = 'Indicador recreativo de 0 a 200';
+
+  try {
+    const result = await atinaServerRpc('atina_qi_my_score', {
+      p_session_token: sessionToken
+    });
+    const row = Array.isArray(result) ? result[0] : result;
+    if (!row) {
+      scoreNode.textContent = '🧠 QI ATINA: —';
+      if (metaNode) metaNode.textContent = 'Ainda não há respostas suficientes para calcular o indicador.';
+      return;
+    }
+    scoreNode.textContent = '🧠 QI ATINA: ' + Number(row.qi_score || 0).toLocaleString('pt-PT');
+    if (metaNode) {
+      metaNode.textContent = Number(row.challenges || 0).toLocaleString('pt-PT') +
+        ' desafios considerados · ' +
+        Number(row.accuracy || 0).toLocaleString('pt-PT', {maximumFractionDigits:1}) +
+        '% de precisão';
+    }
+  } catch (error) {
+    scoreNode.textContent = '🧠 QI ATINA: indisponível';
+    if (metaNode) metaNode.textContent = 'Não foi possível atualizar o indicador.';
+    console.warn('ATINA: não foi possível carregar o QI do perfil.', error);
+  } finally {
+    atinaQiScoreInFlight = false;
+  }
+}
+
+async function atinaResultProgressRender(){
+ const panel=$('atinaResultProgressSummary');
+ if(!panel)return;
+ panel.innerHTML='<p class="muted small">A carregar a tua progressão…</p>';
+ try{
+  const token=atinaAccountSessionToken();
+  let profile=window.atinaCloudProfile||atinaCloudProfile||null;
+  if(token){profile=await atinaServerRpc('atina_account_profile',{p_session_token:token});window.atinaCloudProfile=profile;atinaCloudProfile=profile;}
+  if(!profile){panel.innerHTML='<p class="muted small">Inicia sessão para consultar os valores da tua progressão.</p>';return;}
+  const points=Math.max(0,Number(profile.points)||0),xp=Math.max(0,Number(profile.xp)||0);
+  let qi='—';
+  if(token&&profile.player_id){
+   try{const res=await atinaServerRpc('atina_qi_my_score',{p_session_token:token});const row=Array.isArray(res)?res[0]:res;if(row&&row.qi_score!=null)qi=Number(row.qi_score).toLocaleString('pt-PT');}catch(_){qi='Indisponível';}
+  }
+  const fmt=n=>Number(n).toLocaleString('pt-PT');
+  panel.innerHTML='<h3 style="margin:0 0 10px">📊 A tua progressão</h3><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px"><div style="padding:10px 5px;border:1px solid #38556d;border-radius:11px;background:#10283d;text-align:center"><div style="font-size:12px">🏆 Pontos</div><strong style="font-size:20px;color:#f2d38e">'+fmt(points)+'</strong></div><div style="padding:10px 5px;border:1px solid #38556d;border-radius:11px;background:#10283d;text-align:center"><div style="font-size:12px">⭐ XP</div><strong style="font-size:20px;color:#f2d38e">'+fmt(xp)+'</strong></div><div style="padding:10px 5px;border:1px solid #38556d;border-radius:11px;background:#10283d;text-align:center"><div style="font-size:12px">🧠 QI ATINA</div><strong style="font-size:20px;color:#f2d38e">'+qi+'</strong></div></div><p class="muted small" style="margin:8px 0 0">Valores atuais da conta. As recompensas não são novamente contabilizadas neste ecrã.</p>';
+ }catch(error){panel.innerHTML='<p class="muted small">Não foi possível carregar os valores da progressão neste momento.</p>';console.warn('ATINA: falha ao mostrar progressão no resultado.',error);}
+}
+let atinaProfileRanksBusy = false;
+let atinaProfileRanksNickname = '';
+async function atinaProfileLoadRanks(profile) {
+  const panel = $('atinaCloudProgressPanel');
+  if (!panel || !profile?.nickname || atinaProfileRanksBusy || atinaProfileRanksNickname === profile.nickname) return;
+  atinaProfileRanksBusy = true;
+  atinaProfileRanksNickname = profile.nickname;
+  let box = $('atinaProfileRanks');
+  if (!box) {
+    box = document.createElement('section');
+    box.id = 'atinaProfileRanks';
+    box.style.cssText = 'margin:12px 0 0;padding:12px;border:1px solid #38556d;border-radius:12px;background:#10283d';
+    const progress = panel.querySelector('.daily-progress');
+    if (progress) progress.insertAdjacentElement('afterend', box);
+    else panel.appendChild(box);
+  }
+  box.textContent = '🏅 A carregar classificações…';
+  try {
+    const ranks = await atinaServerRpc('atina_profile_individual_ranks', {
+      p_session_token: atinaAccountSessionToken()
+    });
+    const row = Array.isArray(ranks) ? ranks[0] : ranks;
+    if (!row) {
+      box.textContent = 'Não foi possível encontrar as tuas classificações.';
+      atinaProfileRanksNickname = '';
+      return;
+    }
+    const value = (n) => Number(n || 0).toLocaleString('pt-PT');
+    const rank = (n) => Number(n) > 0 ? '🏆 #' + Number(n).toLocaleString('pt-PT') : 'Sem posição';
+    const qiValue = Number(row.qi_score || 0) > 0 ? value(row.qi_score) : '—';
+    const qiRank = Number(row.qi_rank || 0) > 0 ? rank(row.qi_rank) : 'Sem posição';
+    box.innerHTML = '<strong>🏅 As tuas classificações individuais</strong><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px"><div style="padding:8px 3px;border:1px solid #38556d;border-radius:9px;text-align:center"><small>Pontos</small><div style="font-weight:700;color:#f2d38e">' + value(row.points) + '</div><div class="small">' + rank(row.points_rank) + '</div></div><div style="padding:8px 3px;border:1px solid #38556d;border-radius:9px;text-align:center"><small>XP</small><div style="font-weight:700;color:#f2d38e">' + value(row.xp) + '</div><div class="small">' + rank(row.xp_rank) + '</div></div><div style="padding:8px 3px;border:1px solid #38556d;border-radius:9px;text-align:center"><small>QI</small><div style="font-weight:700;color:#f2d38e">' + qiValue + '</div><div class="small">' + qiRank + '</div></div></div><p class="muted small" style="margin:8px 0 0">Posições calculadas sobre a classificação completa, sem limite Top 100.</p>';
+  } catch (error) {
+    box.textContent = 'Não foi possível carregar as classificações.';
+    atinaProfileRanksNickname = '';
+    console.warn('ATINA: falha ao carregar posições individuais do perfil.', error);
+  } finally {
+    atinaProfileRanksBusy = false;
+  }
+}
+let atinaProfileChallengeProgressBusy = false;
+async function atinaProfileChallengeProgressRefresh() {
+  const token = atinaAccountSessionToken();
+  const anchor = document.getElementById('atinaProfileAccountMount');
+  if (!token || !anchor || atinaProfileChallengeProgressBusy) return;
+  atinaProfileChallengeProgressBusy = true;
+  let panel = document.getElementById('atinaProfileChallengeProgress');
+  if (!panel) {
+    panel = document.createElement('section');
+    panel.id = 'atinaProfileChallengeProgress';
+    panel.style.cssText = 'margin:14px 0;padding:15px;border:1px solid #38556d;border-radius:16px;background:#10283d;color:#e6edf5;';
+    panel.setAttribute('aria-live','polite');
+    anchor.appendChild(panel);
+  } else if (panel.parentElement !== anchor) {
+    anchor.appendChild(panel);
+  }
+  panel.innerHTML = '<h3 style="margin:0 0 8px;font-size:15px">Progresso dos desafios</h3><p style="margin:0;font-size:13px">A carregar o teu progresso…</p>';
+  try {
+    const data = await atinaServerRpc('atina_challenge_catalog_progress', { p_session_token: token });
+    if (!data) throw new Error('Resposta vazia ao carregar progresso.');
+    const fmt = value => Math.max(0, Number(value) || 0).toLocaleString('pt-PT');
+    const safe = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const total = Math.max(0, Number(data.total) || 0), seen = Math.max(0, Number(data.seen) || 0);
+    const percent = total > 0 ? Math.min(100, Math.max(0, seen / total * 100)) : 0;
+    const rows = (items, key) => (Array.isArray(items) ? items : []).map(item => {
+      const itemTotal = Math.max(0, Number(item.total) || 0), itemSeen = Math.max(0, Number(item.seen) || 0);
+      const pct = itemTotal ? Math.min(100, itemSeen / itemTotal * 100) : 0;
+      return '<div style="margin-top:9px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:12px"><span>'+safe(item[key])+'</span><strong>'+fmt(itemSeen)+' / '+fmt(itemTotal)+'</strong></div><div style="height:6px;background:#29445c;border-radius:99px;overflow:hidden;margin-top:4px"><div style="height:100%;width:'+pct+'%;background:#e8c77e;border-radius:99px"></div></div></div>';
+    }).join('');
+    panel.innerHTML = '<h3 style="margin:0 0 8px;font-size:15px">Progresso dos desafios</h3><div style="font-size:13px">'+fmt(seen)+' vistos · '+fmt(data.remaining)+' restantes de '+fmt(total)+'</div><div style="height:9px;background:#29445c;border-radius:99px;overflow:hidden;margin:8px 0" role="progressbar" aria-label="Progresso do catálogo de desafios" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(percent)+'"><div style="height:100%;width:'+percent+'%;background:#e8c77e;border-radius:99px"></div></div><strong style="font-size:13px">'+Math.round(percent)+'% do catálogo explorado</strong><div style="margin-top:14px;font-weight:700;font-size:12px">Por categoria</div>'+rows(data.categories,'category')+'<div style="margin-top:14px;font-weight:700;font-size:12px">Por dificuldade</div>'+rows(data.difficulties,'difficulty');
+  } catch (error) {
+    panel.innerHTML = '<h3 style="margin:0 0 8px;font-size:15px">Progresso dos desafios</h3><p style="margin:0;font-size:13px">Não foi possível carregar o progresso. Tenta novamente quando a ligação estiver disponível.</p><button type="button" id="atinaChallengeProgressRetry" style="margin-top:10px;padding:9px 12px;border-radius:9px;border:1px solid #526d86;background:#1b3852;color:#e6edf5">Tentar novamente</button>';
+    panel.querySelector('#atinaChallengeProgressRetry')?.addEventListener('click', () => void atinaProfileChallengeProgressRefresh());
+    console.warn('ATINA: não foi possível carregar o progresso do catálogo no perfil.', error);
+  } finally {
+    atinaProfileChallengeProgressBusy = false;
+  }
+}
+function atinaProgressRender(profile) {
+  const signedInName = $('atinaSignedInUserName');
+  if (signedInName) signedInName.textContent = profile?.nickname ? 'Ligado como ' + profile.nickname : 'A jogar como convidado';
+  atinaRenderLevelGallery(profile || {level:1,xp:0});
+  if (!profile) return;
+  void atinaProgressLoadMyQi(profile);
+  void atinaProfileLoadRanks(profile);
+  const xp = Math.max(0, Number(profile.xp) || 0);
+  const points = Math.max(0, Number(profile.points) || 0);
+  if ($('atinaCloudPoints')) $('atinaCloudPoints').textContent = points + ' pontos';
+  const thresholds = [0,2000,5000,9000,15000,23000,33000,46000,61000,79000,99000,122000,147000,175000,206000,239000,275000,313000,353000,397000,442000,491000,542000,597000,656000,718000,783000,852000,924000,1000000];
+  const titles = ['Curioso','Explorador','Descobridor','Investigador','Aprendiz','Estudioso','Observador','Pesquisador','Experimentador','Cientista','Inventor','Criativo','Analista','Estratega','Especialista','Pensador','Filósofo','Intelectual','Mentor','Mestre','Erudito','Visionário','Inovador','Sábio','Génio','Iluminado','Grande Mestre','Guardião do Saber','Lenda do Conhecimento','Lenda ATINA'];
+  const level = Math.max(1, Number(profile.level) || 1);
+  const levelIndex = Math.min(level - 1, thresholds.length - 1);
+  const currentThreshold = level <= 30 ? thresholds[levelIndex] : 1080000 + ((level - 31) * 10000) + (((level - 31) * (level - 32)) / 2 * 1000);
+  const nextThreshold = level < 30 ? thresholds[levelIndex + 1] : level === 30 ? 1080000 : currentThreshold + 10000 + Math.max(0, level - 31) * 1000;
+  const progress = Math.max(0, xp - currentThreshold);
+  const needed = Math.max(1, nextThreshold - currentThreshold);
+  const remaining = Math.max(0, nextThreshold - xp);
+  const percent = Math.min(100, progress / needed * 100);
+  const title = titles[levelIndex] || 'Lenda ATINA';
+  const fill = $('atinaCloudXpFill');
+  if ($('atinaCloudLevel')) $('atinaCloudLevel').textContent = 'Nível ' + level + ' · ' + title;
+  if ($('atinaCloudXp')) $('atinaCloudXp').textContent = xp + ' XP';
+  if ($('atinaCloudChallenges')) $('atinaCloudChallenges').textContent = (Number(profile.total_challenges) || 0) + ' desafios';
+  if ($('atinaCloudNextLevel')) $('atinaCloudNextLevel').textContent = progress.toLocaleString('pt-PT') + ' / ' + needed.toLocaleString('pt-PT') + ' XP para o próximo nível · faltam ' + remaining.toLocaleString('pt-PT') + ' XP';
+  if (fill) fill.style.width = percent + '%';
+  if ($('atinaCloudNickname') && profile.nickname) $('atinaCloudNickname').value = profile.nickname;
+  const homeXp = $('atinaXpValue'), homeLevel = $('atinaLevelValue');
+  const homeFill = $('atinaXpFill'), homeMeta = $('atinaXpMeta');
+  if (homeXp) homeXp.textContent = xp.toLocaleString('pt-PT') + ' XP';
+  if (homeLevel) homeLevel.textContent = 'Nível ' + level + ' · ' + title;
+  if (homeFill) homeFill.style.width = percent + '%';
+  if (homeMeta) homeMeta.textContent = progress.toLocaleString('pt-PT') + ' / ' + needed.toLocaleString('pt-PT') + ' XP para o próximo nível';
+  void atinaProfileChallengeProgressRefresh();
+  const badges = $('atinaBadges');
+  if (badges) {
+    const milestones = [{at:1,icon:'🌱',name:'Primeiros passos'},{at:10,icon:'🧠',name:'Mente ativa'},{at:25,icon:'🔥',name:'Persistente'},{at:50,icon:'🏅',name:'Veterano'},{at:100,icon:'👑',name:'Lenda ATINA'}];
+    badges.innerHTML = milestones.map(b => '<span class="atina-badge ' + ((Number(profile.total_challenges)||0) >= b.at ? 'earned' : '') + '" title="' + b.name + '">' + b.icon + ' ' + b.name + '</span>').join('');
+  }
+}
+
+async function atinaProgressCodeToken(code) {
+  const clean = String(code || '').trim().normalize('NFKC');
+  if (clean.length < 8 || clean.length > 64) throw new Error('O código pessoal deve ter entre 8 e 64 caracteres.');
+  if (/^[0-9a-f]{64}$/i.test(clean)) return clean.toLowerCase(); // compatibilidade com códigos antigos
+  if (!window.crypto?.subtle) throw new Error('Este navegador não suporta a criação segura do código. Atualiza o navegador.');
+  const material = await window.crypto.subtle.importKey('raw', new TextEncoder().encode(clean), 'PBKDF2', false, ['deriveBits']);
+  const bits = await window.crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode('ATINA-player-access-v1'),iterations:310000,hash:'SHA-256'}, material, 256);
+  return Array.from(new Uint8Array(bits), value => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function atinaProgressRegister(nickname, quiet = false, personalCode = '') {
+  const clean = String(nickname || '').trim();
+  if (!clean || clean.length > 20) throw new Error('Escolhe um pseudónimo entre 1 e 20 caracteres.');
+  const savedNickname = localStorage.getItem(ATINA_PROGRESS_NICKNAME_KEY) || '';
+  const deviceToken = personalCode ? await atinaProgressCodeToken(personalCode) : atinaProgressDeviceToken(!savedNickname);
+  if (!deviceToken) {
+    throw new Error('O código pessoal não está neste dispositivo. Introduz o teu código para recuperar o perfil.');
+  }
+  const data = await atinaServerRpc('atina_progress_register', {
+    p_nickname: clean,
+    p_device_token: deviceToken
+  });
+  localStorage.setItem(ATINA_PROGRESS_DEVICE_KEY, deviceToken);
+  atinaCloudProfile = data;
+  window.atinaCloudProfile = data;
+  localStorage.setItem(ATINA_PROGRESS_NICKNAME_KEY, clean);
+  atinaProgressRender(data);
+  atinaRenderDailyMission();
+  if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = quiet
+    ? 'Perfil sincronizado. O progresso está pronto.'
+    : 'Pseudónimo guardado. A progressão está sincronizada.';
+  return data;
+}
+
+async function atinaProgressClaim(state) {
+  if (!['solo', 'mix'].includes(state?.mode)) return;
+  if (!state || !['correct', 'wrong', 'incorrect'].includes(state.last_result?.outcome) || !state.round_locked || !atinaServerSession) return;
+  const deviceToken = atinaAccountSessionToken();
+  if (!deviceToken) {
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Inicia sessão com o teu pseudónimo para guardar XP.';
+    return;
+  }
+  const key = state.session_id + ':' + state.position;
+  if (atinaCloudClaimsDone.has(key) || atinaCloudClaimsInFlight.has(key)) return;
+  atinaCloudClaimsInFlight.add(key);
+  try {
+    if (!atinaCloudProfile) {
+      atinaCloudProfile = await atinaServerRpc('atina_account_profile', {p_session_token: deviceToken});
+      atinaProgressRender(atinaCloudProfile);
+    }
+    const result = await atinaServerRpc('atina_progress_claim_local', {
+      p_device_token: deviceToken,
+      p_session_id: state.session_id,
+      p_session_token: atinaServerSession.token,
+      p_position: Number(state.position)
+    });
+    atinaCloudClaimsDone.add(key);
+    atinaCloudProfile = result;
+    window.atinaCloudProfile = result;
+    atinaProgressRender(result);
+    // Refresh the public points ranking immediately after the server confirms an award.
+    void atinaProgressLoadPointsLeaderboard();
+    atinaRenderDailyMission();
+    if ($('atinaCloudStatus')) {
+      $('atinaCloudStatus').textContent = result.awarded
+        ? '✨ +' + (Number(result.challenge_xp) || 10) + ' XP' + (Number(result.bonus_total ?? result.daily_bonus) ? ' · bónus extra +' + Number(result.bonus_total ?? result.daily_bonus) + ' XP' : '') + ' confirmado pelo servidor.'
+        : 'Este desafio já tinha sido contabilizado. XP sincronizado.';
+    }
+  } catch (error) {
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Não foi possível sincronizar o XP. Será tentado novamente: ' + (error.message || 'falha de ligação');
+  } finally {
+    atinaCloudClaimsInFlight.delete(key);
+  }
+}
+
+async function atinaProgressLoadPointsLeaderboard() {
+  const list = $('atinaPointsLeaderboard');
+  if (!list) return;
+  try {
+    const rows = await atinaServerRpc('atina_points_leaderboard', { p_limit: 15 });
+    list.replaceChildren();
+    const rankedRows = Array.isArray(rows)
+      ? rows.filter(row => Number(row.points || 0) > 0).slice(0, 15)
+      : [];
+    if (!rankedRows.length) {
+      const empty = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 3;
+      cell.textContent = 'Ainda não há Pontos globais registados.';
+      empty.appendChild(cell);
+      list.appendChild(empty);
+      return;
+    }
+    rankedRows.forEach((row, index) => {
+      const item = document.createElement('tr');
+      const rank = document.createElement('td');
+      const nickname = document.createElement('td');
+      const points = document.createElement('td');
+      rank.textContent = String(index + 1);
+      nickname.textContent = row.nickname;
+      points.textContent = Number(row.points || 0).toLocaleString('pt-PT');
+      item.append(rank, nickname, points);
+      list.appendChild(item);
+    });
+  } catch (error) {
+    list.replaceChildren();
+    const item = document.createElement('li');
+    item.textContent = error.message || 'Não foi possível carregar a classificação de Pontos.';
+    list.appendChild(item);
+  }
+}
+
+const ATINA_LEVEL_TITLES = ['Curioso','Explorador','Descobridor','Investigador','Aprendiz','Estudioso','Observador','Pesquisador','Experimentador','Cientista','Inventor','Criativo','Analista','Estratega','Especialista','Pensador','Filósofo','Intelectual','Mentor','Mestre','Erudito','Visionário','Inovador','Sábio','Génio','Iluminado','Grande Mestre','Guardião do Saber','Lenda do Conhecimento','Lenda ATINA'];
+const ATINA_KNOWLEDGE_LEVEL_ICONS = [
+ 'head-question','book-open-variant','lightbulb-on','magnify','school',
+ 'brain','notebook-edit','bookshelf','puzzle-check','compass-rose',
+ 'calculator-variant','atom','flask-outline','dna','earth',
+ 'landmark','palette-outline','translate','telescope','microscope',
+ 'chart-timeline-variant','medal-outline','book-multiple','brain-circuit','lightbulb-group',
+ 'head-cog','school-outline','star-four-points','trophy-variant','crown'
+];
+function atinaCreateKnowledgeLevelIcon(level, compact=false) {
+ const n=Math.min(30,Math.max(1,Math.floor(Number(level)||1)));
+ const medal=document.createElement('span');
+ medal.className='atina-knowledge-medal'+(compact?' is-compact':'');
+ const glyph=document.createElement('span');
+ glyph.className='mdi mdi-'+ATINA_KNOWLEDGE_LEVEL_ICONS[n-1];
+ glyph.setAttribute('aria-hidden','true');
+ const number=document.createElement('em');number.textContent=String(n);
+ medal.append(glyph,number);
+ return medal;
+}
+
+function atinaLevelDesignation(level) {
+  const safeLevel = Math.max(1, Number(level) || 1);
+  return ATINA_LEVEL_TITLES[Math.min(safeLevel - 1, ATINA_LEVEL_TITLES.length - 1)];
+}
+
+function atinaCreateLevelInsignia(level) {
+  const n = Math.min(30, Math.max(1, Number(level) || 1));
+  const palettes = [
+    ['#a66c42','#f4c58d','#244e50','#a8d6a0'],
+    ['#9d854e','#f4dda0','#254d77','#79d8ec'],
+    ['#718b61','#e5d69a','#205d58','#c4a4ff'],
+    ['#987052','#f0c88b','#344e6d','#f0c77d'],
+    ['#b58b45','#ffe0a0','#285b55','#f8d36c'],
+    ['#8798a9','#edf4f8','#263f66','#d4e8ff']
+  ];
+  const [metal, light, dark, gem] = palettes[Math.floor((n - 1) / 5)];
+  const silhouettes = [
+    'M50 4 77 13 94 39 83 73 50 96 17 73 6 39 23 13Z',
+    'M50 4 68 9 88 26 92 54 73 86 50 96 27 86 8 54 12 26 32 9Z',
+    'M50 3 91 50 50 97 9 50Z',
+    'M50 5C75 5 95 25 95 50S75 95 50 95 5 75 5 50 25 5 50 5Z',
+    'M50 3 62 14 80 8 84 28 97 50 84 72 80 92 62 86 50 97 38 86 20 92 16 72 3 50 16 28 20 8 38 14Z',
+    'M50 4 87 25 87 70 50 96 13 70 13 25Z',
+    'M50 4 74 10 91 31 87 68 50 96 13 68 9 31 26 10Z',
+    'M50 4 82 18 96 50 82 82 50 96 18 82 4 50 18 18Z',
+    'M50 3 96 37 78 91 22 91 4 37Z',
+    'M50 3 64 18 86 13 83 37 97 50 83 63 86 87 64 82 50 97 36 82 14 87 17 63 3 50 17 37 14 13 36 18Z'
+  ];
+  const motifs = [
+    '<path d="M50 25C39 25 31 33 31 43c0 8 6 12 11 16v6h16v-6c5-4 11-8 11-16 0-10-8-18-19-18Z M43 72h14" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>',
+    '<path d="M31 27h38v35H48L35 73v-11h-4Z" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="41" cy="44" r="2.5" fill="currentColor"/><circle cx="50" cy="44" r="2.5" fill="currentColor"/><circle cx="59" cy="44" r="2.5" fill="currentColor"/>',
+    '<path d="M29 29q21-9 42 0v42q-21-9-42 0Z M50 29v42 M36 40h8m12 0h8" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<circle cx="50" cy="49" r="21" fill="none" stroke="currentColor" stroke-width="4"/><path d="m50 20 7 26-7 5-7-5Z M50 51l18 12" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="m29 48 13 13 29-32 M29 65l13 10 29-29" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>',
+    '<path d="m50 20 8 22 23 1-18 14 7 23-20-13-20 13 7-23-18-14 23-1Z" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M29 34h42v34H29z M37 43h26 M37 51h18 M37 59h22" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>',
+    '<path d="M50 23v49 M26 47h48 M33 30l34 38 M67 30 33 68" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="50" cy="47" r="8" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M50 23 74 37v27L50 78 26 64V37Z M38 48l8 8 17-19" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/>',
+    '<path d="M50 21 72 42 50 77 28 42Z M28 42h44 M39 42l11 35 11-35" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M30 33h40v33H30z M39 43h22 M39 52h14 M39 61h18" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 22c-12 0-21 9-21 21 0 15 21 35 21 35s21-20 21-35c0-12-9-21-21-21Z" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="50" cy="43" r="7" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M50 22 57 42 78 43 62 56 68 77 50 65 32 77 38 56 22 43 43 42Z M50 31v27" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M29 29h42v42H29z M38 39l24 22 M62 39 38 61" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 22v54 M23 49h54 M31 30l38 38 M69 30 31 68" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="50" cy="49" r="17" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M30 30h40v40H30z M39 42h22 M39 50h22 M39 58h14" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="m50 20 26 15v28L50 78 24 63V35Z M36 49l9 9 20-22" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M27 63 39 39l11 14 11-24 12 34Z M32 70h36" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 22 74 49 50 76 26 49Z M50 22v54 M26 49h48" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M30 31h40v38H30z M38 43h24 M38 51h24 M38 59h14" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M50 20c-17 0-29 12-29 29s12 29 29 29 29-12 29-29S67 20 50 20Z M50 32v18l14 9" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 20 80 50 50 80 20 50Z M35 50h30 M50 35v30" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M30 70V30h40v40H30Z M38 60l9-12 7 7 9-16" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 19 61 39l22 3-16 15 4 22-21-11-21 11 4-22-16-15 22-3Z M50 30v38" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M25 50h50 M50 25v50 M32 32l36 36 M68 32 32 68" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="50" cy="50" r="10" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M29 28h42v44H29z M38 39h24 M38 49h24 M38 59h15" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M50 18 57 42 82 50 57 58 50 82 43 58 18 50 43 42Z" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 20 78 38v24L50 80 22 62V38Z M35 50l10 10 21-23" fill="none" stroke="currentColor" stroke-width="3.5"/>',
+    '<path d="M50 18 61 39 84 42 67 58 71 81 50 70 29 81 33 58 16 42 39 39Z M50 29v34" fill="none" stroke="currentColor" stroke-width="3"/>',
+    '<path d="M50 17 83 37 71 76H29L17 37Z M34 49l11 11 22-24 M50 17v60" fill="none" stroke="currentColor" stroke-width="3.5"/>'
+  ];
+  const id = 'atina-level-' + n;
+  const shape = silhouettes[(n - 1) % silhouettes.length];
+  const motif = motifs[n - 1];
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('class', 'atina-level-insignia');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Insígnia ATINA do nível ' + n);
+  svg.innerHTML = [
+    '<defs>',
+    '<linearGradient id="' + id + '-metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff9e9"/><stop offset=".18" stop-color="' + light + '"/><stop offset=".42" stop-color="' + metal + '"/><stop offset=".65" stop-color="' + dark + '"/><stop offset=".84" stop-color="' + metal + '"/><stop offset="1" stop-color="#fff0c9"/></linearGradient>',
+    '<radialGradient id="' + id + '-gem" cx=".35" cy=".25" r=".85"><stop offset="0" stop-color="#fff"/><stop offset=".22" stop-color="' + gem + '"/><stop offset=".72" stop-color="' + dark + '"/><stop offset="1" stop-color="#101827"/></radialGradient>',
+    '<filter id="' + id + '-shadow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2"/></filter>',
+    '</defs>',
+    '<path d="' + shape + '" transform="translate(0 2)" fill="#000" opacity=".5" filter="url(#' + id + '-shadow)"/>',
+    '<path d="' + shape + '" fill="url(#' + id + '-metal)" stroke="#fff4d8" stroke-width="2.5" stroke-linejoin="round"/>',
+    '<path d="' + shape + '" transform="translate(50 50) scale(.87) translate(-50 -50)" fill="none" stroke="' + dark + '" stroke-width="2.1"/>',
+    '<path d="' + shape + '" transform="translate(50 50) scale(.77) translate(-50 -50)" fill="none" stroke="#fff" stroke-opacity=".65" stroke-width="1"/>',
+    '<circle cx="50" cy="49" r="30" fill="' + dark + '" stroke="' + light + '" stroke-width="2.3"/>',
+    '<circle cx="50" cy="49" r="25.5" fill="url(#' + id + '-gem)" stroke="#fff" stroke-opacity=".6" stroke-width="1"/>',
+    '<circle cx="50" cy="49" r="21" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width="1"/>',
+    '<g color="' + light + '">' + motif + '</g>',
+    '<path d="M50 10 54 18 50 25 46 18Z M50 74 54 82 50 90 46 82Z" fill="' + light + '" stroke="#fff" stroke-width=".8"/>',
+    '<path d="M14 50h9 M77 50h9" stroke="' + light + '" stroke-width="2.2" stroke-linecap="round"/>',
+    '<circle cx="14" cy="50" r="2" fill="#fff"/><circle cx="86" cy="50" r="2" fill="#fff"/>',
+    '<circle cx="50" cy="49" r="12.5" fill="' + dark + '" fill-opacity=".88" stroke="' + light + '" stroke-width="1.4"/>',
+    '<text x="50" y="55" text-anchor="middle" font-family="Georgia,serif" font-size="' + (n >= 10 ? 14 : 18) + '" font-weight="700" fill="#fff9e9" stroke="#142033" stroke-width="1.2" paint-order="stroke">' + n + '</text>',
+    '<path d="M27 19Q39 11 49 14" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".65"/>'
+  ].join('');
+  svg.dataset.family = String(Math.floor((n - 1) / 5) + 1);
+  return svg;
+}
+function atinaRenderLevelGallery(profile) {
+  const gallery = $('atinaLevelGallery');
+  if (!gallery) return;
+  const thresholds = [0,2000,5000,9000,15000,23000,33000,46000,61000,79000,99000,122000,147000,175000,206000,239000,275000,313000,353000,397000,442000,491000,542000,597000,656000,718000,783000,852000,924000,1000000];
+  const titles = ['Curioso','Explorador','Descobridor','Investigador','Aprendiz','Estudioso','Observador','Pesquisador','Experimentador','Cientista','Inventor','Criativo','Analista','Estratega','Especialista','Pensador','Filósofo','Intelectual','Mentor','Mestre','Erudito','Visionário','Inovador','Sábio','Génio','Iluminado','Grande Mestre','Guardião do Saber','Lenda do Conhecimento','Lenda ATINA'];
+  const xp = Math.max(0, Number(profile?.xp) || 0);
+  const currentLevel = Math.max(1, Number(profile?.level) || 1);
+  gallery.replaceChildren();
+  gallery.removeAttribute('data-ready');
+  const summary = document.createElement('p');
+  summary.className = 'muted small';
+  const nextLevel = currentLevel + 1;
+  const nextThreshold = currentLevel < 30
+    ? thresholds[currentLevel]
+    : 1080000 + ((currentLevel - 30) * 10000) + ((currentLevel - 30) * (currentLevel - 29) / 2 * 1000);
+  const nextTitle = titles[Math.min(nextLevel - 1, titles.length - 1)] || 'Lenda ATINA';
+  summary.textContent = 'Insígnias conquistadas: ' + Math.min(currentLevel, 30) + ' / 30 · Próximo nível: ' + nextTitle + ' aos ' + nextThreshold.toLocaleString('pt-PT') + ' XP';
+  gallery.appendChild(summary);
+  const grid = document.createElement('div');
+  grid.className = 'atina-level-gallery-grid';
+  thresholds.slice(0, Math.min(currentLevel, 30)).forEach((threshold, index) => {
+    const level = index + 1;
+    const unlocked = true;
+    const card = document.createElement('article');
+    card.className = 'atina-level-gallery-card is-unlocked';
+    const emblem = document.createElement('div');
+    emblem.className = 'atina-level-gallery-emblem';
+    emblem.appendChild(atinaCreateKnowledgeLevelIcon(level));
+    if (!unlocked) emblem.setAttribute('aria-label', 'Insígnia bloqueada do nível ' + level);
+    const title = document.createElement('strong');
+    title.textContent = titles[index];
+    const number = document.createElement('span');
+    number.className = 'atina-level-gallery-number';
+    number.textContent = 'Nível ' + level;
+    const status = document.createElement('span');
+    status.className = 'atina-level-gallery-status';
+    if (unlocked) {
+      status.textContent = '✓ Conquistada · ' + threshold.toLocaleString('pt-PT') + ' XP';
+    } else {
+      status.textContent = Math.max(0, threshold - xp).toLocaleString('pt-PT') + ' XP em falta';
+    }
+    const xpRequirement = document.createElement('span');
+    xpRequirement.className = 'atina-level-gallery-status';
+    xpRequirement.textContent = 'Requer ' + threshold.toLocaleString('pt-PT') + ' XP';
+    card.append(emblem, number, title, status, xpRequirement);
+    grid.appendChild(card);
+  });
+  gallery.appendChild(grid);
+  gallery.dataset.ready = 'true';
+}
+
+async function atinaProgressLoadLeaderboard() {
+  const list = $('atinaCloudLeaderboard');
+  if (!list) return;
+  try {
+    const rows = await atinaServerRpc('atina_progress_leaderboard', { p_limit: 15 });
+    list.replaceChildren();
+    const rankedRows = Array.isArray(rows)
+      ? rows.filter(row => Number(row.xp || 0) > 0).slice(0, 15)
+      : [];
+    if (!rankedRows.length) {
+      const empty = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 4;
+      cell.textContent = 'Ainda não há jogadores com XP registado.';
+      empty.appendChild(cell);
+      list.appendChild(empty);
+      return;
+    }
+    rankedRows.forEach((row, index) => {
+      const item = document.createElement('tr');
+      const rank = document.createElement('td');
+      const nickname = document.createElement('td');
+      const xp = document.createElement('td');
+      const level = document.createElement('td');
+      rank.textContent = String(index + 1);
+      nickname.textContent = row.nickname;
+      xp.textContent = Number(row.xp || 0).toLocaleString('pt-PT');
+      const levelNumber = Math.max(1, Number(row.level) || 1);
+      const levelBadge = document.createElement('span');
+      levelBadge.className = 'atina-level-medal';
+      levelBadge.appendChild(atinaCreateKnowledgeLevelIcon(levelNumber, true));
+      levelBadge.setAttribute('aria-label', 'Nível ' + levelNumber);
+      const levelTitle = document.createElement('span');
+      levelTitle.className = 'atina-level-title';
+      levelTitle.textContent = atinaLevelDesignation(levelNumber);
+      level.append(levelBadge, levelTitle);
+      item.append(rank, nickname, xp, level);
+      list.appendChild(item);
+    });
+  } catch (error) {
+    list.replaceChildren();
+    const item = document.createElement('li');
+    item.textContent = error.message || 'Não foi possível carregar a classificação global.';
+    list.appendChild(item);
+  }
+}
+
+
+async function atinaProgressLoadQiLeaderboard() {
+  const list = $('atinaQiLeaderboard');
+  if (!list) return;
+  try {
+    const rows = await atinaServerRpc('atina_qi_leaderboard', { p_limit: 15 });
+    list.replaceChildren();
+    const rankedRows = Array.isArray(rows) ? rows.slice(0, 15) : [];
+    if (!rankedRows.length) {
+      const empty = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 5;
+      cell.textContent = 'A classificação QI* começa a ser preenchida com as próximas partidas.';
+      empty.appendChild(cell);
+      list.appendChild(empty);
+      return;
+    }
+    rankedRows.forEach((row, index) => {
+      const item = document.createElement('tr');
+      [
+        String(index + 1),
+        String(row.nickname || 'Jogador'),
+        Number(row.qi_score || 0).toLocaleString('pt-PT'),
+        Number(row.challenges || 0).toLocaleString('pt-PT'),
+        Number(row.accuracy || 0).toLocaleString('pt-PT', {maximumFractionDigits:1}) + '%'
+      ].forEach(value => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        item.appendChild(cell);
+      });
+      item.title = 'Dificuldade: ' + Number(row.difficulty_score || 0).toFixed(1) +
+        ' · Velocidade: ' + Number(row.speed_score || 0).toFixed(1) +
+        ' · Consistência: ' + Number(row.consistency_score || 0).toFixed(1);
+      list.appendChild(item);
+    });
+  } catch (error) {
+    list.replaceChildren();
+    const item = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 5;
+    cell.textContent = 'Não foi possível carregar a classificação QI*.';
+    item.appendChild(cell);
+    list.appendChild(item);
+  }
+}
+
+async function atinaProgressCopyRecovery() {
+  const token = atinaProgressDeviceToken(false);
+  if (!token) {
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Ainda não existe uma chave neste dispositivo. Regista um pseudónimo ou recupera-o com o código.';
+    return;
+  }
+  if ($('atinaCloudRecoveryCode')) $('atinaCloudRecoveryCode').value = token;
+  try {
+    await navigator.clipboard.writeText(token);
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Código de recuperação copiado. Guarda-o num local seguro.';
+  } catch (_) {
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Não foi possível copiar automaticamente. O código está no campo de recuperação para copiares manualmente.';
+  }
+}
+
+async function atinaProgressRestoreFromCode() {
+  const code = String($('atinaCloudRecoveryCode')?.value || '').trim();
+  const nickname = String($('atinaCloudNickname')?.value || localStorage.getItem(ATINA_PROGRESS_NICKNAME_KEY) || '').trim();
+  if (!nickname || nickname.length > 20) {
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Indica o pseudónimo associado ao teu código pessoal.';
+    return;
+  }
+  try {
+    const deviceToken = await atinaProgressCodeToken(code);
+    const data = await atinaServerRpc('atina_progress_register', {p_nickname:nickname,p_device_token:deviceToken});
+    localStorage.setItem(ATINA_PROGRESS_DEVICE_KEY, deviceToken);
+    localStorage.setItem(ATINA_PROGRESS_NICKNAME_KEY, nickname);
+    atinaCloudProfile = data;
+    window.atinaCloudProfile = data;
+    atinaProgressRender(data);
+    atinaRenderDailyMission();
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Perfil recuperado. O pseudónimo e a progressão estão sincronizados neste dispositivo.';
+  } catch (error) {
+    if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = error.message || 'Não foi possível recuperar o perfil.';
+  }
+}
+
+function atinaProgressBoot() {
+  // New account model: never silently recreate a legacy device-only profile.
+  const sessionToken = atinaAccountSessionToken();
+  if (!sessionToken) return;
+  atinaServerRpc('atina_account_profile', {p_session_token:sessionToken})
+    .then(profile => {
+      atinaCloudProfile = profile;
+      window.atinaCloudProfile = profile;
+      atinaProgressRender(profile);
+      atinaRenderDailyMission();
+      if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'Sessão recuperada. O teu progresso está sincronizado.';
+      if ($('authSummary')) $('authSummary').textContent = 'Sessão iniciada como ' + profile.nickname + '. O teu progresso está sincronizado.';
+      if ($('homeLoginBadge')) $('homeLoginBadge').classList.remove('hidden');
+      if ($('homeLoginText')) $('homeLoginText').textContent = profile.nickname;
+      if (localStorage.getItem('atinaLegalAcknowledgedV1') === '1' && typeof showHomePage === 'function') showHomePage('dashboard', true);
+    })
+    .catch(error => {
+      localStorage.removeItem(ATINA_ACCOUNT_SESSION_KEY);
+      atinaCloudProfile = null;
+      window.atinaCloudProfile = null;
+      if ($('atinaCloudStatus')) $('atinaCloudStatus').textContent = 'A sessão expirou. Entra novamente com o teu pseudónimo e palavra-passe.';
+    });
+}
+
+function atinaServerMessage(message) {
+  const gameVisible = $('game') && !$('game').classList.contains('hidden');
+  if (gameVisible) {
+    $('feedback').textContent = message;
+    return;
+  }
+  const target = $('networkStatus') || $('networkLobbyStatus');
+  if (target) target.textContent = message;
+  const home = $('home');
+  if (home) {
+    let notice = $('atinaConnectionNotice');
+    if (!notice) {
+      notice = document.createElement('p');
+      notice.id = 'atinaConnectionNotice';
+      notice.className = 'feedback';
+      notice.setAttribute('aria-live', 'polite');
+      home.insertBefore(notice, home.firstChild);
+    }
+    notice.textContent = message;
+  }
+}
+function atinaServerStopTimers() {
+  if (atinaServerTimer !== null) clearInterval(atinaServerTimer);
+  if (atinaServerPolling !== null) clearInterval(atinaServerPolling);
+  atinaServerTimer = null;
+  atinaServerPolling = null;
+  if (timerInterval !== null) clearInterval(timerInterval);
+  timerInterval = null;
+}
+function atinaServerRenderTimer() {
+  const deadline = atinaServerState?.deadline_at ? Date.parse(atinaServerState.deadline_at) : 0;
+  const cluesRevealed = (atinaServerState?.challenge?.clues || []).length;
+  if (atinaServerState?.round_locked) {
+    $('timerDisplay').textContent = '00:00';
+    $('timerDisplay').classList.remove('urgent');
+    return;
+  }
+  // Antes da primeira pista, mostrar a contagem decrescente de 10 segundos.
+  // Ao chegar a zero, pedir ao servidor a revelação da primeira pista.
+  if (cluesRevealed === 0) {
+    if (!atinaServerAutoRevealAt) atinaServerAutoRevealAt = Date.now() + 10000;
+    const remaining = Math.max(0, Math.ceil((atinaServerAutoRevealAt - Date.now()) / 1000));
+    timeLeft = remaining;
+    $('timerDisplay').textContent = 'Prepara-te! ' + '00:' + String(remaining).padStart(2, '0');
+    $('timerDisplay').classList.toggle('urgent', remaining <= 3);
+    if (remaining === 0 && !atinaServerAutoRevealTriggered && !atinaServerBusy) {
+      atinaServerAutoRevealTriggered = true;
+      reveal();
+    }
+    return;
+  }
+  atinaServerAutoRevealAt = 0;
+  atinaServerAutoRevealTriggered = false;
+  if (!deadline) {
+    $('timerDisplay').textContent = 'Sem limite';
+    $('timerDisplay').classList.remove('urgent');
+    return;
+  }
+  const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  timeLeft = remaining;
+  $('timerDisplay').textContent = String(Math.floor(remaining / 60)).padStart(2, '0') + ':' + String(remaining % 60).padStart(2, '0');
+  $('timerDisplay').classList.toggle('urgent', remaining <= 10);
+  if (remaining === 0) atinaServerRefresh().catch(() => {});
+}
+function atinaServerStartTimers() {
+  atinaServerStopTimers();
+  atinaServerRenderTimer();
+  atinaServerTimer = setInterval(atinaServerRenderTimer, 250);
+  atinaServerPolling = setInterval(() => atinaServerRefresh().catch(() => {}), 2500);
+}
+let atinaSolutionSpeechPanel = null;
+let atinaSolutionSpeechRun = 0;
+
+function atinaStopSolutionSpeech() {
+  atinaSolutionSpeechRun++;
+  if (typeof atinaSpeechGeneration !== 'undefined') atinaSpeechGeneration++;
+  if (typeof atinaSpeechPausedByUser !== 'undefined') atinaSpeechPausedByUser = false;
+  if (typeof atinaSpeechQueue !== 'undefined') atinaSpeechQueue.length = 0;
+  if (typeof atinaSpeechBusy !== 'undefined') atinaSpeechBusy = false;
+  if (typeof atinaSpeechUtterance !== 'undefined') atinaSpeechUtterance = null;
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  if (atinaSolutionSpeechPanel) {
+    const playButton = atinaSolutionSpeechPanel.querySelector('[data-solution-speech-play]');
+    const stopButton = atinaSolutionSpeechPanel.querySelector('[data-solution-speech-stop]');
+    if (playButton) playButton.textContent = '▶ Ouvir';
+    if (stopButton) stopButton.hidden = true;
+  }
+  atinaSolutionSpeechPanel = null;
+}
+
+function atinaFinishSolutionSpeech(run) {
+  if (run !== atinaSolutionSpeechRun) return;
+  if (atinaSolutionSpeechPanel) {
+    const playButton = atinaSolutionSpeechPanel.querySelector('[data-solution-speech-play]');
+    const stopButton = atinaSolutionSpeechPanel.querySelector('[data-solution-speech-stop]');
+    if (playButton) playButton.textContent = '▶ Ouvir';
+    if (stopButton) stopButton.hidden = true;
+  }
+  atinaSolutionSpeechPanel = null;
+}
+
+function atinaRenderSolutionWikipedia(challenge, isLocked = false, activeChallengeId = null) {
+  const target = $('solutionImage');
+  if (!target) return;
+  const previous = target.querySelector('[data-solution-wikipedia]');
+  // A história só pode aparecer depois de o servidor confirmar que a ronda foi revelada.
+  if (!isLocked || !challenge || !Number.isFinite(Number(challenge.id)) ||
+      Number(activeChallengeId) !== Number(challenge.id)) {
+    if (previous) {
+      if (atinaSolutionSpeechPanel === previous) atinaStopSolutionSpeech();
+      previous.remove();
+    }
+    return;
+  }
+  // As referências bibliográficas permanecem nos registos internos; nunca são apresentadas aos jogadores.
+  const rawDescription = String(challenge.solution_description || '').trim();
+  const paragraphs = rawDescription.split(/\n\s*\n/).map(text => text.trim()).filter(Boolean);
+  const playerParagraphs = paragraphs.filter(text =>
+    !/^\*\*?(?:fontes?|refer[eê]ncias?|bibliografia)\b/i.test(text) &&
+    !/^(?:fontes?|refer[eê]ncias?|bibliografia)\s*:/i.test(text) &&
+    !/https?:\/\//i.test(text)
+  );
+  const description = playerParagraphs.join('\n\n').trim();
+  if (!description) {
+    if (previous) {
+      if (atinaSolutionSpeechPanel === previous) atinaStopSolutionSpeech();
+      previous.remove();
+    }
+    return;
+  }
+  // atinaServerApplyState é chamado a cada 2,5 segundos. Não recriar o painel
+  // do mesmo desafio: isso cancelaria a leitura que ainda está em curso.
+  if (previous &&
+      previous.dataset.solutionChallengeId === String(challenge.id) &&
+      Array.from(previous.querySelectorAll('p')).map(node => node.textContent || '').join('\n\n') === description) {
+    return;
+  }
+  if (previous) {
+    if (atinaSolutionSpeechPanel === previous) atinaStopSolutionSpeech();
+    previous.remove();
+  }
+
+  const panel = document.createElement('section');
+  panel.dataset.solutionWikipedia = 'true';
+  panel.dataset.solutionChallengeId = String(challenge.id);
+  panel.setAttribute('aria-label', 'História da solução');
+  const heading = document.createElement('h3');
+  heading.textContent = '📚 História da solução';
+  panel.appendChild(heading);
+
+  if ('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window) {
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display:flex;align-items:center;gap:7px;margin:0 0 12px;';
+    const playButton = document.createElement('button');
+    playButton.type = 'button';
+    playButton.className = 'sound-toggle';
+    playButton.dataset.solutionSpeechPlay = 'true';
+    playButton.textContent = '▶ Ouvir';
+    playButton.setAttribute('aria-label', 'Ouvir a História da solução');
+    playButton.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:30px;border:1px solid #526a80;border-radius:999px;background:#132a40;color:#dce7f1;font-size:12px;font-weight:600;box-shadow:none;cursor:pointer;';
+    const stopButton = document.createElement('button');
+    stopButton.type = 'button';
+    stopButton.className = 'sound-toggle';
+    stopButton.dataset.solutionSpeechStop = 'true';
+    stopButton.textContent = '■ Parar';
+    stopButton.setAttribute('aria-label', 'Parar a leitura');
+    stopButton.hidden = true;
+    stopButton.style.cssText = 'align-items:center;padding:6px 9px;min-height:30px;border:1px solid #526a80;border-radius:999px;background:transparent;color:#aebfd0;font-size:12px;font-weight:500;box-shadow:none;cursor:pointer;';
+
+    playButton.addEventListener('click', () => {
+      const speech = window.speechSynthesis;
+      if (atinaSolutionSpeechPanel === panel) {
+        if (typeof atinaSpeechPausedByUser !== 'undefined' && atinaSpeechPausedByUser) {
+          atinaSpeechPausedByUser = false;
+          speech.resume();
+          if (typeof atinaSpeechPump === 'function') atinaSpeechPump();
+          playButton.textContent = 'Ⅱ Pausar';
+        } else {
+          if (typeof atinaSpeechPausedByUser !== 'undefined') atinaSpeechPausedByUser = true;
+          speech.pause();
+          playButton.textContent = '▶ Continuar';
+        }
+        return;
+      }
+
+      atinaStopSolutionSpeech();
+      const run = atinaSolutionSpeechRun;
+      atinaSolutionSpeechPanel = panel;
+      stopButton.hidden = false;
+      playButton.textContent = 'Ⅱ Pausar';
+      const started = typeof atinaSpeakClue === 'function' && atinaSpeakClue(
+        playerParagraphs.join('. '),
+        true,
+        {
+          onStart: () => {
+            if (run === atinaSolutionSpeechRun && atinaSolutionSpeechPanel === panel) {
+              playButton.textContent = 'Ⅱ Pausar';
+            }
+          },
+          onEnd: () => atinaFinishSolutionSpeech(run),
+          onError: () => atinaFinishSolutionSpeech(run)
+        }
+      );
+      if (!started) atinaFinishSolutionSpeech(run);
+    });
+    stopButton.addEventListener('click', atinaStopSolutionSpeech);
+    controls.append(playButton, stopButton);
+    panel.appendChild(controls);
+  }
+
+  playerParagraphs.forEach(text => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    panel.appendChild(paragraph);
+  });
+  target.appendChild(panel);
+  target.classList.remove('hidden');
+}
+
+const atinaImageCreditCache = new Map();
+async function atinaRenderChallengeImageCredit(challengeId) {
+  const target = $('challengeImageCredit');
+  if (!target) return;
+  const id = Number(challengeId);
+  if (!Number.isInteger(id) || id <= 0) { target.classList.add('hidden'); return; }
+  target.dataset.challengeId = String(id);
+  target.classList.remove('hidden');
+  target.textContent = 'A carregar créditos da imagem…';
+  try {
+    let credit = atinaImageCreditCache.get(id);
+    if (credit === undefined) {
+      const { data, error } = await supabaseClient.rpc('atina_image_credit', { p_challenge_id: id });
+      if (error) throw error;
+      credit = data || null;
+      atinaImageCreditCache.set(id, credit);
+    }
+    if (target.dataset.challengeId !== String(id)) return;
+    target.replaceChildren();
+    if (!credit) { target.classList.add('hidden'); return; }
+    const attribution = String(credit.attribution || '').trim();
+    const author = String(credit.author || '').trim();
+    target.textContent = attribution || (author ? 'Fotografia: ' + author : '');
+    const links = [];
+    if (author === 'Jules Verne Times Two') links.push(['Site do autor', 'https://julesvernex2.com']);
+    if (credit.source_url) links.push(['Ver imagem original', credit.source_url]);
+    if (credit.license_url) links.push(['Licença ' + String(credit.license || '').trim(), credit.license_url]);
+    for (const [label, url] of links) {
+      if (!/^https:\/\//i.test(url)) continue;
+      const link = document.createElement('a');
+      link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = label;
+      link.style.marginLeft = '8px';
+      target.append(link);
+    }
+    target.classList.toggle('hidden', !target.textContent.trim() && !links.length);
+  } catch (error) {
+    if (target.dataset.challengeId === String(id)) {
+      target.textContent = 'Não foi possível carregar os créditos desta imagem.';
+    }
+  }
+}
+
+function atinaRenderChallengeProgress(position, total) {
+  const card = document.getElementById('category')?.closest('.card');
+  if (!card) return;
+  let wrap = document.getElementById('atinaChallengeProgress');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'atinaChallengeProgress';
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', 'Progresso da partida');
+    wrap.style.cssText = 'margin:10px 0 14px;';
+    const label = document.createElement('div');
+    label.id = 'atinaChallengeProgressLabel';
+    label.style.cssText = 'display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:800;margin-bottom:5px;';
+    const track = document.createElement('div');
+    track.style.cssText = 'height:8px;border-radius:999px;background:#26384c;overflow:hidden;';
+    const fill = document.createElement('div');
+    fill.id = 'atinaChallengeProgressFill';
+    fill.style.cssText = 'height:100%;width:0%;border-radius:inherit;background:linear-gradient(90deg,#38c5dd,#71f1c0);transition:width .25s ease;';
+    track.appendChild(fill);
+    wrap.append(label, track);
+    const stats = card.querySelector('.atina-live-stats');
+    if (stats) stats.insertAdjacentElement('afterend', wrap);
+    else card.insertBefore(wrap, card.firstChild);
+  }
+  const safeTotal = Math.max(1, Number(total) || 1);
+  const safePosition = Math.max(0, Math.min(safeTotal, Number(position) || 0));
+  const percent = Math.round(safePosition / safeTotal * 100);
+  const label = document.getElementById('atinaChallengeProgressLabel');
+  const fill = document.getElementById('atinaChallengeProgressFill');
+  if (label) {
+    label.textContent = 'Desafios da partida';
+    const count = document.createElement('span');
+    count.textContent = safePosition + ' / ' + safeTotal;
+    label.replaceChildren(document.createTextNode('Desafios da partida'), count);
+  }
+  if (fill) {
+    fill.style.width = percent + '%';
+    fill.setAttribute('aria-valuenow', String(percent));
+    fill.setAttribute('aria-valuemin', '0');
+    fill.setAttribute('aria-valuemax', '100');
+    fill.setAttribute('role', 'progressbar');
+    fill.setAttribute('aria-label', 'Desafio ' + safePosition + ' de ' + safeTotal);
+  }
+}
+
+async function atinaChallengeCatalogProgressRefresh() {
+  const token = atinaAccountSessionToken();
+  if (!token || !atinaServerState) return;
+  try {
+    const data = await atinaServerRpc('atina_challenge_catalog_progress', { p_session_token: token });
+    atinaRenderChallengeCatalogProgress(data, atinaServerState.category, atinaServerState.difficulty);
+  } catch (error) {
+    console.warn('ATINA: não foi possível atualizar os contadores de desafios.', error);
+  }
+}
+function atinaRenderChallengeCatalogProgress(data, selectedCategory, selectedDifficulty) {
+  const card = document.getElementById('category')?.closest('.card');
+  if (!card || !data) return;
+  let panel = document.getElementById('atinaChallengeCatalogProgress');
+  if (!panel) {
+    panel = document.createElement('section');
+    panel.id = 'atinaChallengeCatalogProgress';
+    panel.setAttribute('aria-live', 'polite');
+    panel.style.cssText = 'margin:12px 0;padding:12px;border:1px solid #38556d;border-radius:12px;background:#10283d;font-size:12px;';
+    const matchProgress = document.getElementById('atinaChallengeProgress');
+    if (matchProgress) matchProgress.insertAdjacentElement('afterend', panel);
+    else card.appendChild(panel);
+  }
+  const fmt = n => Number(n || 0).toLocaleString('pt-PT');
+  const safeLabel = value => String(value ?? '').replace(/[&<>\"']/g, ch => ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '\"' ? '&quot;' : '&#39;');
+  const row = (label, total, seen, remaining) => '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0"><span>'+safeLabel(label)+'</span><strong>'+fmt(seen)+' / '+fmt(total)+' · '+fmt(remaining)+' restantes</strong></div>';
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const difficulties = Array.isArray(data.difficulties) ? data.difficulties : [];
+  const selectedCat = categories.find(x => x.category === selectedCategory);
+  const selectedDiff = difficulties.find(x => x.difficulty === selectedDifficulty);
+  let messages = [];
+  if (selectedCat && Number(selectedCat.remaining) === 0) messages.push('Já completaste todos os desafios desta categoria! Escolhe outra categoria para continuares a jogar.');
+  if (selectedDiff && Number(selectedDiff.remaining) === 0) messages.push('Parabéns! Já completaste todos os desafios desta dificuldade! Experimenta outra dificuldade.');
+  if (Number(data.remaining) === 0) messages.push('🎉 Parabéns! Já completaste todos os desafios disponíveis. Não há mais desafios disponíveis de momento. Contacta o administrador para adicionar novos desafios e continuares a jogar!');
+  panel.innerHTML = '<strong>📚 Progressão do catálogo</strong><div style="margin-top:8px">'+row('Total geral',data.total,data.seen,data.remaining)+'</div><div style="margin-top:8px"><strong>Por categoria</strong>'+categories.map(x=>row(String(x.category),x.total,x.seen,x.remaining)).join('')+'</div><div style="margin-top:8px"><strong>Por dificuldade</strong>'+difficulties.map(x=>row(({easy:'Fácil',medium:'Normal',hard:'Difícil',mixed:'Aleatória'})[x.difficulty]||x.difficulty,x.total,x.seen,x.remaining)).join('')+'</div>'+messages.map(m=>'<p style="margin:8px 0;color:#f2d38e" role="status">'+m+'</p>').join('');
+}
+
+function atinaServerApplyState(state, announce = false) {
+  if (!state?.challenge) throw new Error('O servidor devolveu um estado de jogo inválido.');
+  const sameChallenge = !!(atinaServerState && atinaServerState.session_id === state.session_id && atinaServerState.position === state.position);
+  if (!sameChallenge) {
+    atinaServerAutoRevealAt = (state.challenge.clues || []).length === 0 ? Date.now() + 10000 : 0;
+    atinaServerAutoRevealTriggered = false;
+    // A transcrição de voz pertence apenas ao desafio anterior.
+    const voiceTranscript = document.getElementById('voiceTranscript');
+    const voiceTranscriptText = document.getElementById('voiceTranscriptText');
+    if (voiceTranscript) voiceTranscript.classList.add('hidden');
+    if (voiceTranscriptText) voiceTranscriptText.textContent = '';
+  }
+  const resultKey = JSON.stringify(state.last_result || {});
+  const clearAnswer = !sameChallenge || resultKey !== atinaServerLastResult;
+  atinaServerLastResult = resultKey;
+  atinaServerState = state;
+  mode = state.mode;
+  scores = Array.isArray(state.scores) ? state.scores : [0, 0];
+  player = Math.max(0, Number(state.current_player || 1) - 1);
+  pos = Math.max(0, Number(state.position || 1) - 1);
+  queue = Array.from({ length: Number(state.queue_size || 0) }, (_, i) => i);
+  revealed = (state.challenge.clues || []).length;
+  locked = !!state.round_locked;
+  answeredCount = Number(state.answered_count || 0);
+  difficultyMode = state.difficulty || difficultyMode;
+  const challenge = state.challenge;
+  atinaRenderChallengeProgress(pos + 1, queue.length);
+  if (!sameChallenge) void atinaChallengeCatalogProgressRefresh();
+  const specialCard = state.special_card || null;
+  const localCardPopupKey = specialCard ? [state.session_id || '', state.position || 0, specialCard.id || specialCard.name || ''].join('|') : '';
+  if (specialCard && localCardPopupKey !== window.__atinaLastLocalCardPopupKey) {
+    window.__atinaLastLocalCardPopupKey = localCardPopupKey;
+    if (typeof window.showAtinaSpecialCardPopup === 'function') window.showAtinaSpecialCardPopup(specialCard);
+  }
+  atinaRenderChallengeImageCredit(challenge.id);
+  const total = Number(challenge.total_clues || (challenge.image_url ? 6 : 5));
+  $('category').textContent = (challenge.emoji || '') + ' ' + (challenge.category || 'Desafio');
+  $('level').textContent = 'DESAFIO ' + (pos + 1) + ' / ' + queue.length + ' · ' + difficultyLabel(difficultyMode);
+  $('player').textContent = mode === 'duel' ? 'Vez do Jogador ' + (player + 1) : mode === 'party' ? '🎉 Vez da Equipa ' + (player + 1) : mode === 'mix' ? '🔀 Modo Mix' : 'Modo individual';
+  $('clues').replaceChildren();
+  for (let i = 0; i < total; i++) {
+    const item = document.createElement('div');
+    const clue = challenge.clues?.[i];
+    item.className = 'clue' + (clue === undefined ? ' hidden-clue' : '');
+    item.textContent = clue === undefined ? 'Pista ' + (i + 1) + ': ainda escondida' : 'Pista ' + (i + 1) + ': ' + clue;
+    $('clues').appendChild(item);
+  }
+  $('clueProgress').textContent = revealed + ' de ' + total + ' reveladas';
+  $('nextClue').disabled = locked || revealed >= total;
+  $('nextClue').textContent = revealed >= total ? 'Todas as pistas reveladas' : 'Revelar próxima pista';
+  $('answer').disabled = locked;
+  $('submit').disabled = locked;
+  $('pass').disabled = locked;
+  $('continue').classList.toggle('hidden', !locked);
+  $('listenAnswer').classList.toggle('hidden', !locked || !challenge.answer);
+  $('visualWrap').classList.toggle('hidden', !challenge.image_url);
+  if (challenge.image_url) {
+    $('mysteryImage').src = challenge.image_url;
+    $('mysteryImage').style.setProperty('--blur', locked ? '0px' : Math.max(0, 24 - revealed * 4) + 'px');
+    $('veil').style.setProperty('--veil', locked ? '0' : '.35');
+    $('revealLabel').textContent = locked ? 'Imagem totalmente revelada' : 'Imagem misteriosa';
+    renderPuzzle(Math.max(1, revealed));
+  }
+  const result = state.last_result || {};
+  // Renderiza o total devolvido pelo servidor diretamente no marcador da ronda.
+  // O fallback para os pontos do resultado evita deixar o indicador a zero
+  // caso uma resposta intermédia traga o resultado antes do total atualizado.
+  const liveScoreNow = $('atinaRoundScore');
+  if (liveScoreNow) {
+    const scoreList = Array.isArray(state.scores) ? state.scores.map(value => Number(value) || 0) : [];
+    const activeScore = scoreList[player] ?? scoreList[0] ?? 0;
+    const awardedNow = result.outcome === 'correct' ? Number(result.points || 0) : 0;
+    liveScoreNow.textContent = String(Math.max(activeScore, awardedNow));
+  }
+  let message = '';
+  if (result.outcome === 'correct') {
+    message = 'Certo! ' + (challenge.answer || 'Resposta validada pelo servidor') + ' · +' + Number(result.points || 0) + ' pontos.';
+    if (result.party_final_round_bonus) message += ' Bónus da última ronda aplicado.';
+  } else if (result.outcome === 'wrong') message = 'Resposta errada: −' + Number(result.penalty || 10) + ' pontos. Tenta novamente.';
+  else if (result.outcome === 'timeout') message = '⏰ Tempo esgotado. ' + (challenge.answer ? 'Resposta: ' + challenge.answer : '');
+  else if (result.outcome === 'pass') message = 'Desafio passado. ' + (challenge.answer ? 'Resposta: ' + challenge.answer : '');
+  else if (locked) message = challenge.answer ? 'Resposta: ' + challenge.answer : 'Ronda terminada.';
+  else message = 'Fala ou escreve a tua resposta.';
+  $('feedback').textContent = message;
+  // Lê a solução uma única vez quando o jogador erra, o tempo termina ou passa.
+  // A leitura é forçada: não depende da opção de leitura automática das pistas.
+  if (['correct', 'wrong', 'incorrect', 'timeout', 'pass'].includes(result.outcome) && typeof atinaSpeakClue === 'function') {
+    const spokenKey = [state.session_id, state.position, result.outcome].join(':');
+    if (spokenKey !== atinaServerLastSpokenSolution) {
+      atinaServerLastSpokenSolution = spokenKey;
+      if (result.outcome === 'correct') atinaSpeakClue('Resposta certa!', true);
+      else if (challenge.answer) atinaSpeakClue('A resposta correta é: ' + challenge.answer, true);
+    }
+  }
+  if (locked) { const guestChallengeKey = 'server:' + state.session_id + ':' + state.position; atinaRecordChallengeCompletion(guestChallengeKey); if (typeof atinaIsGuest === 'function' && atinaIsGuest() && typeof atinaGuestRecordCompletion === 'function') { const guestCount = atinaGuestRecordCompletion(guestChallengeKey); if (guestCount >= 10 && $('continue')) $('continue').textContent = 'Criar conta para continuar'; } }
+  if (locked && ['correct', 'wrong', 'incorrect'].includes(result.outcome)) atinaProgressClaim(state);
+  if (locked) {
+    atinaShowSolutionImage(
+      challenge.answer,
+      challenge.category,
+      'solutionImage',
+      Array.isArray(challenge.tags) ? challenge.tags : [],
+      challenge.solution_image_url || (typeof challenge.image_url === 'string' && /^https:\/\/qvvlqrgbtjujsejvenld\.supabase\.co\/storage\/v1\/object\/public\/atina-challenge-images\/challenges\/\d+\/[a-f0-9]{64}\.webp$/i.test(challenge.image_url) && challenge.image_url.includes('/challenges/' + String(challenge.id) + '/') ? challenge.image_url : null),
+      challenge.solution_description || '',
+      challenge.solution_image_credit || null
+    ).then(() => atinaRenderSolutionWikipedia(challenge, !!atinaServerState?.round_locked, atinaServerState?.challenge?.id)).catch(() => {});
+  } else {
+    $('solutionImage')?.classList.add('hidden');
+  }
+  if (clearAnswer) $('answer').value = '';
+  $('feedback').classList.remove('is-correct', 'is-wrong', 'is-info');
+  $('feedback').classList.add(result.outcome === 'correct' ? 'is-correct' : result.outcome === 'wrong' || result.outcome === 'timeout' ? 'is-wrong' : 'is-info');
+  $('networkScoreboard').classList.add('hidden');
+  update();
+  board();
+  if (announce) screen('game');
+  if (state.status === 'completed') {
+    atinaServerStopTimers();
+    $('resultText').textContent = 'Partida concluída. Resultado: ' + scores.join('–') + ' pontos.';
+    screen('result');
+  } else if (sameChallenge) {
+    atinaServerStartTimers();
+  } else {
+    atinaServerStopTimers();
+    const expectedSession = state.session_id;
+    const expectedPosition = state.position;
+    const finalGame = [challenge.category || 'Desafio', challenge.emoji || '🎯'];
+    mixDraw(finalGame, state.difficulty || difficultyMode).finally(() => {
+      if (atinaServerState?.session_id === expectedSession && atinaServerState?.position === expectedPosition && atinaServerState?.status !== 'completed') atinaServerStartTimers();
+    });
+  }
+}
+async function atinaServerRefresh() {
+  if (!atinaServerSession || atinaServerBusy) return;
+  atinaServerBusy = true;
+  try {
+    const state = await atinaServerRpc('atina_v2_local_game_state', {
+      p_session_id: atinaServerSession.session_id,
+      p_token: atinaServerSession.token
+    });
+    atinaServerApplyState(state);
+  } catch (error) {
+    if (atinaServerIsInvalidSession(error)) {
+      atinaServerStopTimers();
+      atinaServerSession = null;
+      atinaServerState = null;
+      localStorage.removeItem(ATINA_SERVER_SESSION_KEY);
+      screen('home');
+      atinaServerMessage('A partida expirou. Inicia uma nova partida.');
+    }
+  } finally {
+    atinaServerBusy = false;
+  }
+}
+async function atinaServerStart(gameMode, category = null, geographicScope = 'Todos') {
+  atinaServerStartRequested = true;
+  atinaServerStopTimers();
+  atinaServerBusy = true;
+  atinaServerMessage('A preparar uma partida segura no servidor…');
+  try {
+    const duration = Number($('timerMode')?.value ?? 60);
+    const selectedDifficulty = $('difficultyMode')?.value || 'medium';
+    const difficulty = ['easy', 'medium', 'hard', 'mixed'].includes(selectedDifficulty) ? selectedDifficulty : 'medium';
+    if (['solo', 'mix'].includes(gameMode) && atinaAccountSessionToken() && !atinaCloudProfile) {
+      try { atinaCloudProfile = await atinaServerRpc('atina_account_profile', {p_session_token: atinaAccountSessionToken()}); atinaProgressRender(atinaCloudProfile); } catch (_) {}
+    }
+    const configuredChallengeCount = Number($('challengeCount')?.value ?? 10);
+    const challengeCount = Number.isInteger(configuredChallengeCount) && configuredChallengeCount >= 1 && configuredChallengeCount <= 1000 ? configuredChallengeCount : 10;
+    const response = await atinaServerRpc('atina_v2_start_local_game', {
+      p_game_mode: gameMode,
+      p_difficulty: difficulty,
+      p_category: category,
+      p_timed_mode_seconds: Number.isFinite(duration) ? duration : 60,
+      p_challenge_count: challengeCount,
+      p_device_token: ['solo', 'mix'].includes(gameMode) && atinaCloudProfile
+        ? atinaAccountSessionToken() : null,
+      p_geographic_scope: ['Portugal', 'Internacional', 'Universal'].includes(geographicScope) ? geographicScope : 'Todos'
+    });
+    if (!response?.token || !response?.state?.session_id) throw new Error('Não foi possível iniciar a sessão segura.');
+    atinaServerSession = { session_id: response.state.session_id, token: response.token };
+    localStorage.setItem(ATINA_SERVER_SESSION_KEY, JSON.stringify(atinaServerSession));
+    screen('game');
+    atinaServerApplyState(response.state);
+  } catch (error) {
+    atinaServerMessage(error.message || 'Não foi possível iniciar a partida. É necessária ligação à Internet.');
+    screen('home');
+  } finally {
+    atinaServerBusy = false;
+    atinaServerStartRequested = false;
+  }
+}
+start = function(gameMode, category = null, geographicScope = 'Todos') { if (typeof atinaGuestLimitReached === 'function' && atinaGuestLimitReached()) { if (typeof atinaShowGuestRegistration === 'function') atinaShowGuestRegistration(); return Promise.resolve(); } if (typeof atinaActivateAutomaticSpeech === 'function') atinaActivateAutomaticSpeech(); return atinaServerStart(gameMode, category, geographicScope); };
+submit = async function() {
+  if (!atinaServerState || locked || atinaServerBusy) return;
+  const answer = $('answer').value.trim();
+  if (!answer) { atinaServerMessage('Escreve primeiro a tua resposta.'); $('answer').focus(); return; }
+  atinaServerBusy = true;
+  try {
+    const state = await atinaServerRpc('atina_v2_local_submit_answer', {
+      p_session_id: atinaServerSession.session_id,
+      p_token: atinaServerSession.token,
+      p_answer: answer
+    });
+    playAtinaSound(state.last_result?.outcome === 'correct' ? 'correct' : 'wrong');
+    $('answer').value = '';
+    atinaServerApplyState(state);
+  } catch (error) { atinaServerMessage(error.message || 'Não foi possível validar a resposta.'); }
+  finally { atinaServerBusy = false; }
+};
+reveal = async function() {
+  if (!atinaServerState || locked || atinaServerBusy) return;
+
+  atinaServerBusy = true;
+  try {
+    const state = await atinaServerRpc('atina_v2_local_reveal_clue', {
+      p_session_id: atinaServerSession.session_id, p_token: atinaServerSession.token
+    });
+    playAtinaSound('clue');
+    atinaServerApplyState(state);
+    // Ler automaticamente cada nova pista revelada, incluindo a revelação automática após o countdown.
+    const clues = state?.challenge?.clues || [];
+    const latest = clues.length ? clues[clues.length - 1] : '';
+    const clueText = typeof latest === 'string' ? latest : (latest?.text || latest?.clue || latest?.content || '');
+    if (clueText && typeof atinaSpeakClue === 'function') {
+      atinaSpeakClue('Pista ' + clues.length + '. ' + String(clueText), true);
+    }
+  } catch (error) { atinaServerMessage(error.message || 'Não foi possível revelar a pista.'); }
+  finally { atinaServerBusy = false; }
+};
+pass = async function() {
+  if (!atinaServerState || locked || atinaServerBusy) return;
+  atinaServerBusy = true;
+  try {
+    const state = await atinaServerRpc('atina_v2_local_pass_challenge', {
+      p_session_id: atinaServerSession.session_id, p_token: atinaServerSession.token
+    });
+    playAtinaSound('pass');
+    atinaServerApplyState(state);
+  } catch (error) { atinaServerMessage(error.message || 'Não foi possível passar o desafio.'); }
+  finally { atinaServerBusy = false; }
+};
+next = async function() {
+  if (typeof atinaGuestLimitReached === 'function' && atinaGuestLimitReached()) { if (typeof atinaShowGuestRegistration === 'function') atinaShowGuestRegistration(); return; }
+  if (!atinaServerState || !locked || atinaServerBusy) return;
+
+  atinaServerBusy = true;
+  try {
+    const state = await atinaServerRpc('atina_v2_local_next_challenge', {
+      p_session_id: atinaServerSession.session_id, p_token: atinaServerSession.token
+    });
+    atinaServerApplyState(state);
+  } catch (error) { atinaServerMessage(error.message || 'Não foi possível avançar.'); }
+  finally { atinaServerBusy = false; }
+};
+load = function() { if (atinaServerState) atinaServerApplyState(atinaServerState); };
+saveLocalProgress = function() {};
+restoreLocalProgress = function() { return false; };
+update = function() {
+  $('totalScore').textContent = (mode === 'duel' || mode === 'party')
+    ? 'Jogador/Equipa 1: ' + scores[0] + ' · Jogador/Equipa 2: ' + scores[1]
+    : '⭐ ' + scores[0] + ' pontos';
+  $('progress').textContent = answeredCount + ' / ' + queue.length + ' desafios concluídos';
+  const liveScore = $('atinaRoundScore');
+  const liveStreak = $('atinaRoundStreak');
+  const liveRound = $('atinaRoundNumber');
+  const liveTotal = $('atinaRoundTotal');
+  if (liveScore) liveScore.textContent = String(scores[mode === 'duel' || mode === 'party' ? player : 0] || 0);
+  if (liveStreak) liveStreak.textContent = String(Number(atinaServerState?.correct_streak || atinaServerState?.streak || 0));
+  if (liveRound) liveRound.textContent = String(Math.min(pos + 1, queue.length || 1));
+  if (liveTotal) liveTotal.textContent = String(queue.length || 1);
+};
+board = function() {
+  const label = mode === 'duel' ? 'Jogador 1: ' + scores[0] + ' · Jogador 2: ' + scores[1]
+    : mode === 'party' ? 'Equipa 1: ' + scores[0] + ' · Equipa 2: ' + scores[1]
+    : 'Desafio ' + (pos + 1) + ' de ' + queue.length + ' · ' + scores[0] + ' pontos';
+  $('scoreboard').textContent = label;
+};
+raceStart = function() {};
+raceStop = function() {};
+timerTick = function() { atinaServerRenderTimer(); };
+stopTimer = function() {
+  if (timerInterval !== null) clearInterval(timerInterval);
+  timerInterval = null;
+  if (atinaServerTimer !== null) clearInterval(atinaServerTimer);
+  atinaServerTimer = null;
+};
+startTimer = function() { atinaServerStartTimers(); };
+$('listenCurrentClue').addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const clues = atinaServerState?.challenge?.clues || [];
+  const raw = clues.length ? clues[clues.length - 1] : '';
+  const currentClue = typeof raw === 'string' ? raw : (raw?.text || raw?.clue || raw?.content || '');
+  const feedback = $('feedback');
+  if (!String(currentClue).trim()) {
+    if (feedback) feedback.textContent = 'Ainda não existe uma pista revelada para ouvir.';
+    return;
+  }
+  if (typeof atinaSpeakClue === 'function') {
+    atinaSpeakClue(String(currentClue).trim(), true);
+    if (feedback) feedback.textContent = '🔊 A preparar a leitura da pista…';
+    return;
+  }
+  if (feedback) feedback.textContent = 'A leitura de voz não está disponível nesta página.';
+}, true);
+$('listenAnswer').onclick = () => {
+  const answer = atinaServerState?.challenge?.answer || networkGameState?.answer;
+  if (!answer) return;
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+    const speech = new SpeechSynthesisUtterance('A resposta correta é: ' + answer);
+    speech.lang = 'pt-PT';
+    window.speechSynthesis.speak(speech);
+  } else atinaServerMessage('A leitura em voz alta não está disponível neste navegador.');
+};
+$('back').onclick = () => {
+  if (networkRoom) { networkLeaveRoom(); return; }
+  atinaServerStopTimers();
+  atinaServerSession = null;
+  atinaServerState = null;
+  localStorage.removeItem(ATINA_SERVER_SESSION_KEY);
+  screen('home');
+};
+// O ão local de Mímicas é gerido pelo próprio modo local em index.html.
+
+function atinaServerIsInvalidSession(error) {
+  return error?.code === '28000' || /Sessão inválida ou expirada/i.test(error?.message || '');
+}
+async function atinaServerRestoreSession() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(ATINA_SERVER_SESSION_KEY) || 'null'); } catch (_) { localStorage.removeItem(ATINA_SERVER_SESSION_KEY); }
+  if (!saved?.session_id || !saved?.token) return false;
+  atinaServerSession = saved;
+  try {
+    const state = await atinaServerRpc('atina_v2_local_game_state', { p_session_id: saved.session_id, p_token: saved.token });
+    screen('game');
+    atinaServerApplyState(state);
+    return true;
+  } catch (error) {
+    if (atinaServerIsInvalidSession(error)) {
+      atinaServerSession = null;
+      localStorage.removeItem(ATINA_SERVER_SESSION_KEY);
+    } else {
+      atinaServerMessage('Não foi possível recuperar a partida devido a uma falha de ligação. A sessão foi preservada; verifica a Internet e tenta novamente.');
+    }
+    return false;
+  }
+}
+
+/* Multiplayer challenges use only server-issued state and server-side scoring. */
+networkDrawClock = function() {
+  const st = networkGameState;
+  if (!st || !networkGameActive) return;
+  if (st.mode === 'mimicas') {
+    const deadline = Number(st.deadline || 0);
+    const remaining = deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
+    $('mimeTimer').textContent = deadline ? String(Math.floor(remaining / 60)).padStart(2, '0') + ':' + String(remaining % 60).padStart(2, '0') : '∞';
+    return;
+  }
+  const pause = st.pause;
+  if (pause && Date.parse(pause.ends_at) > Date.now()) {
+    const left = Math.max(0, Math.ceil((Date.parse(pause.ends_at) - Date.now()) / 1000));
+    $('timerDisplay').textContent = 'PAUSA · ' + String(Math.floor(left / 60)).padStart(2, '0') + ':' + String(left % 60).padStart(2, '0');
+    $('timerDisplay').classList.remove('urgent');
+    return;
+  }
+  const deadline = Number(st.deadline || 0);
+  const remaining = deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
+  $('timerDisplay').textContent = deadline ? String(Math.floor(remaining / 60)).padStart(2, '0') + ':' + String(remaining % 60).padStart(2, '0') : 'Sem limite';
+  $('timerDisplay').classList.toggle('urgent', !!deadline && remaining <= 10);
+  timeLeft = remaining;
+};
+networkReceiveState = function(st) {
+  if (!st || (!['challenges', 'mimicas', 'completed'].includes(st.mode))) return;
+  if (networkGameState && Number(st.revision || 0) <= Number(networkLastRevision || 0)) return;
+  const previous = networkGameState;
+  const changed = !previous || previous.pos !== st.pos || previous.challenge_id !== st.challenge_id || previous.round !== st.round || previous.mode !== st.mode;
+  if (changed) { atinaNetworkChallengeKey = [st.mode,st.pos,st.challenge_id,st.round].join(':'); atinaNetworkFeedback = ''; $('answer').value = ''; }
+  networkGameState = st;
+  networkLastRevision = Number(st.revision || 0);
+  networkGameActive = st.mode !== 'completed';
+  if (changed) networkAnsweredThisChallenge = false;
+  networkGameHost = !!networkLobbyData?.is_host;
+  if (st.mode === 'mimicas') {
+    if (st.finished && networkClockHandle !== null) { clearInterval(networkClockHandle); networkClockHandle = null; }
+    networkRenderMimeState();
+    if (!st.finished) ensureNetworkClock();
+  } else if (st.mode === 'completed') {
+    networkGameActive = false;
+    if (networkClockHandle !== null) { clearInterval(networkClockHandle); networkClockHandle = null; }
+    $('resultText').textContent = 'Partida multiplayer concluída. Consulta a classificação da sala.';
+    screen('result');
+  } else {
+    if ($('game').classList.contains('hidden')) screen('game');
+    networkRenderGameState();
+    ensureNetworkClock();
+  }
+};
+networkStartGame = async function() {
+  if (!networkRoom || !networkLobbyData?.is_host) return;
+  try {
+    await networkCall('atina_v2_start_room', { p_room_id: networkRoom.room_id, p_token: networkRoom.token });
+    const duration = Number($('timerMode')?.value ?? 60);
+    const selectedDifficulty = $('difficultyMode')?.value || 'medium';
+    const difficulty = ['easy', 'medium', 'hard'].includes(selectedDifficulty) ? selectedDifficulty : 'medium';
+    await networkCall('atina_v2_start_room_challenges', {
+      p_room_id: networkRoom.room_id, p_token: networkRoom.token,
+      p_difficulty: difficulty, p_duration_seconds: Number.isFinite(duration) ? duration : 60,
+      p_category: null
+    });
+    networkGameActive = true;
+    await networkRefreshRoom();
+    screen('game');
+  } catch (error) { networkMessage('networkLobbyStatus', error.message || 'Não foi possível iniciar os desafios.'); }
+};
+networkRenderGameState = function() {
+  const st = networkGameState;
+  if (!st || st.mode !== 'challenges') return;
+  if (Number(st.pos) >= Number(st.queue_length)) {
+    networkGameActive = false;
+    if (networkClockHandle) clearInterval(networkClockHandle);
+    networkClockHandle = null;
+    const players = (networkLobbyData?.players || []).slice().sort((a, b) => b.score - a.score);
+    $('resultText').textContent = 'Partida multiplayer concluída.\n' + players.map((p, i) => (i + 1) + '. ' + p.nickname + ' — ' + p.score + ' pontos').join('\n');
+    screen('result');
+    return;
+  }
+  const paused = !!(st.pause && Date.parse(st.pause.ends_at) > Date.now());
+  const activeTeam = st.active_team || null;
+  const myTeam = networkLobbyData?.team || null;
+  const myTeamTurn = !activeTeam || (!!myTeam && activeTeam.trim().toLocaleLowerCase('pt-PT') === String(myTeam).trim().toLocaleLowerCase('pt-PT'));
+  const canControlTurn = activeTeam ? networkCanControlTurn() : !!networkGameHost;
+  $('category').textContent = (st.emoji || '') + ' ' + (st.category || 'Desafio');
+  const onlineCard = st.special_card || null;
+  const cardPopupKey = onlineCard ? [networkRoom?.room_id || '', st.pos, onlineCard.name || '', onlineCard.icon || ''].join('|') : '';
+  if (onlineCard && cardPopupKey !== window.__atinaLastOnlineCardPopupKey) {
+    window.__atinaLastOnlineCardPopupKey = cardPopupKey;
+    let overlay = document.getElementById('atinaOnlineSpecialCardPopup');
+    overlay?.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'atinaOnlineSpecialCardPopup';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'atinaOnlineSpecialCardPopupTitle');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:22px;background:rgba(8,12,24,.78);backdrop-filter:blur(5px)';
+    const panel = document.createElement('div');
+    panel.style.cssText = 'width:min(420px,100%);padding:28px 24px;border:2px solid #d6b45c;border-radius:22px;background:linear-gradient(145deg,#20283b,#111827);color:#fff;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.5)';
+    const icon = document.createElement('div'); icon.textContent = onlineCard.icon || '🃏'; icon.style.cssText = 'font-size:54px;margin-bottom:10px';
+    const eyebrow = document.createElement('div'); eyebrow.textContent = 'CARTA ESPECIAL'; eyebrow.style.cssText = 'font-size:12px;letter-spacing:2px;font-weight:800;color:#e5c56e;margin-bottom:8px';
+    const title = document.createElement('h2'); title.id = 'atinaOnlineSpecialCardPopupTitle'; title.textContent = onlineCard.name || 'Carta especial'; title.style.cssText = 'font-size:24px;margin:0 0 12px';
+    const desc = document.createElement('p'); desc.textContent = onlineCard.description || 'A carta foi ativada neste desafio.'; desc.style.cssText = 'font-size:16px;line-height:1.5;margin:0 0 24px';
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Continuar'; close.style.cssText = 'border:0;border-radius:999px;padding:12px 28px;background:#e5c56e;color:#171717;font-weight:800;font-size:15px;cursor:pointer'; close.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
+    panel.append(icon, eyebrow, title, desc, close); overlay.append(panel); document.body.append(overlay); close.focus();
+  }
+  $('level').textContent = 'DESAFIO ' + (Number(st.pos) + 1) + ' / ' + st.queue_length;
+  $('player').textContent = 'Multijogador · ' + (networkGameHost ? 'Anfitrião' : 'Jogador');
+  $('clues').replaceChildren();
+  const total = st.image_url ? 6 : 5;
+  for (let i = 0; i < total; i++) {
+    const item = document.createElement('div');
+    const clue = st.clues?.[i];
+    item.className = 'clue' + (clue === undefined ? ' hidden-clue' : '');
+    item.textContent = clue === undefined ? 'Pista ' + (i + 1) + ': ainda escondida' : 'Pista ' + (i + 1) + ': ' + clue;
+    $('clues').appendChild(item);
+  }
+  $('clueProgress').textContent = Number(st.revealed || 1) + ' de ' + total + ' reveladas';
+  let teamTurnNotice = document.getElementById('atinaOnlineTeamTurnNotice');
+  if (!teamTurnNotice) {
+    teamTurnNotice = document.createElement('div');
+    teamTurnNotice.id = 'atinaOnlineTeamTurnNotice';
+    teamTurnNotice.setAttribute('role', 'status');
+    teamTurnNotice.style.cssText = 'margin:8px 0;padding:9px 12px;border-radius:10px;background:rgba(80,130,180,.12);font-weight:700;text-align:center';
+    const categoryNode = $('category');
+    if (categoryNode?.parentNode) categoryNode.parentNode.insertBefore(teamTurnNotice, categoryNode.nextSibling);
+  }
+  teamTurnNotice.textContent = activeTeam ? (myTeamTurn ? 'É a vez da ' + activeTeam + '.' : 'Aguarda: é a vez da ' + activeTeam + '.') : '';
+  teamTurnNotice.classList.toggle('hidden', !activeTeam);
+  $('nextClue').disabled = !canControlTurn || st.locked || Number(st.revealed) >= total || paused;
+  $('pass').disabled = !canControlTurn || st.locked || paused;
+  $('pass').classList.toggle('hidden', !canControlTurn);
+  $('continue').classList.toggle('hidden', !canControlTurn || !st.locked || paused);
+  $('answer').disabled = !!st.locked || paused || networkAnsweredThisChallenge || !myTeamTurn;
+  $('submit').disabled = !!st.locked || paused || networkAnsweredThisChallenge || !myTeamTurn;
+  $('feedback').textContent = st.locked ? 'Resposta: ' + (st.answer || 'ronda terminada') : (atinaNetworkFeedback || 'A resposta será validada pelo servidor.');
+  if (st.locked) atinaRecordChallengeCompletion('room:' + (networkRoom?.room_id || 'online') + ':' + st.pos);
+  $('networkScoreboard').classList.remove('hidden');
+  renderTeamProposal();
+  const players = networkLobbyData?.players || [];
+  const totals = {};
+  players.forEach(p => { if (p.team) totals[p.team] = (totals[p.team] || 0) + Number(p.score || 0); });
+  $('scoreboard').textContent = Object.keys(totals).length
+    ? Object.entries(totals).map(([team, score]) => team + ': ' + score + ' pontos').join(' · ')
+    : players.map(p => p.nickname + ': ' + p.score + ' pontos').join(' · ');
+  const deadline = Number(st.deadline || 0);
+  const remaining = deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
+  $('timerDisplay').textContent = deadline ? String(Math.floor(remaining / 60)).padStart(2, '0') + ':' + String(remaining % 60).padStart(2, '0') : 'Sem limite';
+  $('visualWrap').classList.toggle('hidden', !st.image_url);
+  atinaRenderChallengeImageCredit(st.challenge_id);
+  if (st.image_url) {
+    $('mysteryImage').src = st.image_url;
+    $('mysteryImage').style.setProperty('--blur', st.locked ? '0px' : Math.max(0, 24 - Number(st.revealed || 1) * 4) + 'px');
+    $('veil').style.setProperty('--veil', st.locked ? '0' : '.35');
+    renderPuzzle(Math.max(1, Number(st.revealed || 1)));
+  }
+};
+networkSubmitAnswer = async function() {
+  if (!networkGameActive || !networkGameState || networkGameState.locked || networkGameState.pause || networkAnsweredThisChallenge) return;
+  if (networkGameState.active_team && networkLobbyData?.team && networkGameState.active_team !== networkLobbyData.team) {
+    $('feedback').textContent = 'Ainda não é a vez da tua equipa.';
+    return;
+  }
+  const answer = $('answer').value.trim();
+  if (!answer) { $('feedback').textContent = 'Escreve primeiro a resposta.'; return; }
+  $('submit').disabled = true;
+  try {
+    if (networkLobbyData?.team) {
+      const result = await networkCall('atina_v2_submit_team_proposal', {
+        p_room_id: networkRoom.room_id, p_token: networkRoom.token,
+        p_challenge: networkGameState.pos, p_answer: answer
+      });
+      if (result.status === 'pending') {
+        networkAnsweredThisChallenge = true;
+        atinaNetworkFeedback = 'Proposta enviada. Aguarda a votação dos restantes membros da equipa.';
+        $('answer').value = '';
+      } else if (result.status === 'accepted' || result.status === 'already_correct') {
+        networkAnsweredThisChallenge = true;
+        atinaNetworkFeedback = '✓ Resposta certa! ' + Number(result.points_per_player || result.points || 0) + ' pontos atribuídos por jogador.';
+        $('answer').value = '';
+        playAtinaSound('correct');
+      } else if (result.status === 'rejected') {
+        networkAnsweredThisChallenge = false;
+        atinaNetworkFeedback = result.message || (result.correct === false ? 'Resposta incorreta. Podes tentar novamente.' : 'A proposta foi rejeitada. A equipa pode apresentar outra resposta.');
+      } else if (result.status === 'locked') {
+        networkAnsweredThisChallenge = true;
+        atinaNetworkFeedback = 'O tempo terminou. A ronda foi fechada.';
+      } else {
+        networkAnsweredThisChallenge = false;
+        atinaNetworkFeedback = result.message || 'Não foi possível validar a resposta. Tenta novamente.';
+      }
+    } else {
+      const result = await networkCall('atina_v2_submit_room_answer', {
+        p_room_id: networkRoom.room_id, p_token: networkRoom.token, p_answer: answer
+      });
+      atinaNetworkFeedback = result.status === 'correct' ? '✓ Resposta certa! +' + Number(result.points || 0) + ' pontos atribuídos pelo servidor.' : result.status === 'wrong' ? 'Resposta errada: −' + Number(result.penalty || 10) + ' pontos. Tenta novamente.' : result.status === 'already_correct' ? 'Esta resposta já foi contabilizada.' : result.status === 'locked' ? 'A ronda já terminou.' : 'Resposta recebida pelo servidor.';
+      if (result.status === 'correct' || result.status === 'already_correct') networkAnsweredThisChallenge = true;
+      if (result.status === 'correct') playAtinaSound('correct');
+      else if (result.status === 'wrong') playAtinaSound('wrong');
+      $('answer').value = '';
+    }
+    $('feedback').textContent = atinaNetworkFeedback;
+    await networkRefreshRoom();
+  } catch (error) {
+    $('feedback').textContent = error.message || 'Não foi possível enviar a resposta.';
+    networkAnsweredThisChallenge = false;
+  } finally {
+    const canRetry = !networkAnsweredThisChallenge && !networkGameState?.locked && !networkGameState?.pause;
+    $('submit').disabled = !canRetry;
+    $('answer').disabled = !canRetry;
+  }
+};
+networkHostReveal = async function() {
+  if (!(networkGameState?.active_team ? networkCanControlTurn() : networkGameHost) || !networkGameState || networkGameState.locked) return;
+  try { await networkCall('atina_v2_reveal_room_clue', { p_room_id: networkRoom.room_id, p_token: networkRoom.token }); await networkRefreshRoom(); }
+  catch (error) { networkMessage('feedback', error.message || 'Não foi possível revelar a pista.'); }
+};
+networkHostPass = async function() {
+  if (!(networkGameState?.active_team ? networkCanControlTurn() : networkGameHost) || !networkGameState || networkGameState.locked) return;
+  try { await networkCall('atina_v2_pass_room_challenge', { p_room_id: networkRoom.room_id, p_token: networkRoom.token }); await networkRefreshRoom(); }
+  catch (error) { networkMessage('feedback', error.message || 'Não foi possível passar o desafio.'); }
+};
+networkHostNext = async function() {
+  if (!(networkGameState?.active_team ? networkCanControlTurn() : networkGameHost) || !networkGameState || !networkGameState.locked) return;
+  try { await networkCall('atina_v2_next_room_challenge', { p_room_id: networkRoom.room_id, p_token: networkRoom.token }); await networkRefreshRoom(); }
+  catch (error) { networkMessage('feedback', error.message || 'Não foi possível avançar o desafio.'); }
+};
+networkMimeResolveRound = async function(correct, reason) {
+  if (!networkGameHost || !networkGameState || networkGameState.mode !== 'mimicas' || networkGameState.locked) return;
+  $('mimeCorrect').disabled = true;
+  $('mimeSkip').disabled = true;
+  try {
+    await networkCall('atina_v2_resolve_mime_round', {
+      p_room_id: networkRoom.room_id, p_token: networkRoom.token,
+      p_correct: !!correct, p_points: 0, p_reason: reason || (correct ? 'correct' : 'pass')
+    });
+    await networkRefreshRoom();
+  } catch (error) {
+    $('mimeCorrect').disabled = false;
+    $('mimeSkip').disabled = false;
+    networkMessage('mimeFeedback', error.message || 'Não foi possível registar o resultado.');
+  }
+};
+$('networkStartGame').onclick = networkStartGame;
+$('networkStartMimicas').onclick = networkStartMimicas;
+$('createNetworkRoom').onclick = networkCreateRoom;
+$('joinNetworkRoom').onclick = networkJoinRoom;
+$('leaveNetworkRoom').onclick = networkLeaveRoom;
+$('networkReady').onclick = () => networkSetReady(!networkLobbyData?.ready);
+$('networkAutoTeams').onclick = networkAutoTeams;
+$('networkStartMimicas').onclick = networkStartMimicas;
+$('submit').onclick = submit;
+$('nextClue').onclick = reveal;
+$('pass').onclick = pass;
+$('continue').onclick = next;
+$('answer').addEventListener('keydown', e => { if (e.key === 'Enter' && !$('answer').disabled) { e.preventDefault(); submit(); } });
+function atinaOnlineCountBoot() {
+  const header = document.querySelector('.brand');
+  if (!header || document.getElementById('atinaOnlinePlayerCount')) return;
+  const counter = document.createElement('div');
+  counter.id = 'atinaOnlinePlayerCount';
+  counter.setAttribute('role', 'status');
+  counter.setAttribute('aria-live', 'polite');
+  counter.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:7px 11px;border:1px solid #39896c;border-radius:999px;background:#123c35;color:#b6f3d0;font-size:12px;font-weight:800;line-height:1.35';
+  counter.textContent = '● A ligar presença…';
+  counter.title = 'Pessoas com o ATINA aberto neste momento; não significa que estejam numa sala de jogo.';
+  const adminButton = document.getElementById('adminOnlineButton');
+  if (adminButton) header.insertBefore(counter, adminButton);
+  else header.appendChild(counter);
+
+  const presenceKey = 'atinaSitePresenceSessionV1';
+  const getSessionId = () => {
+    let id = '';
+    try { id = window.localStorage.getItem(presenceKey) || ''; } catch (_) {}
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return id;
+
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        id = window.crypto.randomUUID();
+      } else if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        bytes[6] = (bytes[6] & 15) | 64;
+        bytes[8] = (bytes[8] & 63) | 128;
+        const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+        id = hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+      }
+    } catch (_) {}
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.floor(Math.random() * 16);
+        return (c === 'x' ? r : (r & 3) | 8).toString(16);
+      });
+    }
+    try { window.localStorage.setItem(presenceKey, id); } catch (_) {}
+    return id;
+  };
+
+  const sessionId = getSessionId();
+  let inFlight = false;
+  const refresh = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const nickname = (localStorage.getItem('atinaProgressNicknameV1') || '').trim().slice(0, 40) || 'Visitante';
+      const accountToken = typeof atinaAccountSessionToken === 'function' ? atinaAccountSessionToken() : null;
+      await atinaServerRpc('atina_site_presence_heartbeat', {
+        p_session_id: sessionId,
+        p_nickname: nickname,
+        p_session_token: accountToken || null
+      });
+      const stats = await atinaServerRpc('atina_online_player_stats', {});
+      const total = Math.max(0, Number(stats?.counts?.total) || 0);
+      counter.textContent = '● ' + total + ' jogadores online';
+      counter.title = 'Total de jogadores online, sem duplicações.';
+      counter.dataset.count = String(total);
+      delete counter.dataset.humans;
+    } catch (error) {
+      console.warn('ATINA: não foi possível atualizar a presença online.', error);
+      counter.textContent = '● Presença online indisponível';
+      delete counter.dataset.count;
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  refresh();
+  window.setInterval(refresh, 15000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+}
+
+// Aviso global de manutenção/alterações, controlado pela administração.
+async function atinaNoticeRefresh() {
+  const banner = document.getElementById('atinaUpdateNotice');
+  const message = document.getElementById('atinaUpdateNoticeMessage');
+  if (!banner || !message) return;
+
+  let active = false;
+  let noticeMessage = '';
+
+  // O aviso manual do painel de administração tem prioridade.
+  try {
+    if (supabaseClient) {
+      const { data, error } = await supabaseClient
+        .from('atina_site_notice')
+        .select('active,message,updated_at')
+        .eq('id', 1)
+        .maybeSingle();
+      if (!error && data?.active && String(data.message || '').trim()) {
+        active = true;
+        noticeMessage = String(data.message).trim();
+      }
+    }
+  } catch (error) {
+    console.warn('Aviso manual ATINA indisponível:', error);
+  }
+
+  // Se não houver aviso manual ativo, consulta o aviso automático do GitHub.
+  if (!active) {
+    try {
+      const response = await fetch('https://raw.githubusercontent.com/lufime/ATINA/main/atina-update-status.json?ts=' + Date.now(), { cache: 'no-store' });
+      if (!response.ok) throw new Error('Não foi possível consultar o estado da atualização.');
+      const data = await response.json();
+      if (data?.active && String(data.message || '').trim()) {
+        active = true;
+        noticeMessage = String(data.message).trim();
+      }
+    } catch (error) {
+      console.warn('Aviso automático ATINA indisponível:', error);
+    }
+  }
+
+  message.textContent = active ? noticeMessage : '';
+  banner.classList.toggle('hidden', !active);
+}
+async function atinaNoticeSave() {
+  const status = document.getElementById('atinaNoticeStatus');
+  const button = document.getElementById('atinaNoticeSave');
+  if (!atinaUser || String(atinaUser.email || '').toLowerCase() !== 'lufime@gmail.com') {
+    if (status) status.textContent = 'Apenas o administrador pode publicar avisos.';
+    return;
+  }
+  const active = !!document.getElementById('atinaNoticeActive')?.checked;
+  const message = String(document.getElementById('atinaNoticeMessage')?.value || '').trim();
+  if (active && !message) {
+    if (status) status.textContent = 'Escreve uma mensagem antes de ativar o aviso.';
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'A guardar…';
+  try {
+    const { error } = await supabaseClient.from('atina_site_notice').upsert({
+      id: 1, active, message: message || 'Estamos a fazer melhorias no ATINA. Poderão ocorrer interrupções temporárias.',
+      updated_at: new Date().toISOString()
+    });
+    if (error) throw error;
+    if (status) status.textContent = active ? 'Aviso publicado para todos os jogadores.' : 'Aviso desativado.';
+    await atinaNoticeRefresh();
+  } catch (error) {
+    if (status) status.textContent = 'Não foi possível guardar: ' + (error.message || 'erro desconhecido');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+function atinaNoticeBoot() {
+  const save = document.getElementById('atinaNoticeSave');
+  if (save) save.addEventListener('click', atinaNoticeSave);
+  atinaNoticeRefresh();
+  window.setInterval(atinaNoticeRefresh, 15000);
+}
+
+atinaNoticeBoot();
+atinaProgressBoot();
+// The public points ranking is visible to guests too; load it independently of login.
+void atinaProgressLoadPointsLeaderboard();
+void atinaProgressLoadQiLeaderboard();
+atinaOnlineCountBoot();
+let atinaServerStartRequested = false;
+(async function atinaServerBoot() {
+  try {
+    // Uma sessão individual nunca deve ser recuperada automaticamente ao abrir/atualizar a página.
+    // Apagar a referência local impede que uma partida antiga volte a abrir o ecrã de jogo.
+    localStorage.removeItem(ATINA_SERVER_SESSION_KEY);
+    atinaServerSession = null;
+    atinaServerState = null;
+    atinaServerStopTimers();
+    await networkRestoreSession();
+    if (!networkRoom && !atinaServerStartRequested && !atinaServerSession) screen('home');
+  } catch (_) { screen('home'); }
+})();

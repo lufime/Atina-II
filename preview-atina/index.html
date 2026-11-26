@@ -3932,11 +3932,11 @@ async function atinaShowSolutionImage(answer,category,targetId,hiddenTags=[],pre
    const curatedItem=await atinaFindCuratedSolutionImage(cleanAnswer,aliases);
    // Em jogo online, aceitar o URL enviado pelo servidor apenas quando coincide
    // com a imagem curada e os respetivos créditos do catálogo.
-   const generatedStoragePrefix='https://qvvlqrgbtjujsejvenld.supabase.co/storage/v1/object/public/atina-challenge-images/solutions/';
+   const generatedStoragePrefix='';
    const trustedGeneratedUrl=typeof preGeneratedUrl==='string'
     &&preGeneratedUrl.startsWith(generatedStoragePrefix)
     &&/^\d+\.webp$/.test(preGeneratedUrl.slice(generatedStoragePrefix.length));
-   const publishedStoragePrefix='https://qvvlqrgbtjujsejvenld.supabase.co/storage/v1/object/public/atina-challenge-images/challenges/';
+   const publishedStoragePrefix='';
    const publishedPath=typeof preGeneratedUrl==='string'&&preGeneratedUrl.startsWith(publishedStoragePrefix)?preGeneratedUrl.slice(publishedStoragePrefix.length):'';
    const trustedPublishedUrl=!!solutionCredit&&String(solutionCredit.source||'').toLowerCase()==='atina'
     &&String(solutionCredit.challenge_id||'')===publishedPath.split('/')[0]
